@@ -133,35 +133,40 @@ func TestAnalyticsPricingRecoveryPreservesFiltersAndCollapsedBuckets(t *testing.
 	}
 }
 
-func TestPricingCatchUpPreservesArchivedHistoryDuringRebuild(t *testing.T) {
+func TestPricingCatchUpRebuildsArchivedHistoryFromRetainedProjection(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		sql  string
 	}{
 		{"revision change", `update usage_pricing_rollup_state set structure_revision = 'obsolete'`},
 		{"resumed clearing", `update usage_pricing_rollup_state set status = 'clearing', coverage_event_id = 0, backfill_last_event_id = 0`},
-		{"resumed rebuilding", `update usage_pricing_rollup_state set status = 'rebuilding', coverage_event_id = 0, backfill_last_event_id = 0`},
+		{"resumed rebuilding", `delete from usage_pricing_hourly_rollups_v1;
+			delete from usage_pricing_account_rollups_v1;
+			update usage_pricing_rollup_state set status = 'rebuilding', coverage_event_id = 0, backfill_last_event_id = 0`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db, sqlDB, _, _ := pricingCoverageFixture(t)
 			ctx := context.Background()
+			before := pricingCoverageCounts(t, sqlDB)
 			if _, err := sqlDB.ExecContext(ctx, test.sql); err != nil {
 				t.Fatal(err)
 			}
-			before := pricingCoverageCounts(t, sqlDB)
-			stateBefore, err := db.UsagePricingState(ctx)
+			result, err := db.CatchUpUsagePricing(ctx, 100, time.Now().UnixMilli())
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("rebuild from retained projection: %v", err)
 			}
-			if _, err := db.CatchUpUsagePricing(ctx, 100, time.Now().UnixMilli()); err == nil {
-				t.Fatal("rebuild from deleted raw history unexpectedly succeeded")
+			if !result.Rebuilt || result.Pending || result.CoverageEventID < result.TargetEventID {
+				t.Fatalf("unexpected retained rebuild result: %#v", result)
 			}
 			stateAfter, err := db.UsagePricingState(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if after := pricingCoverageCounts(t, sqlDB); after != before || !reflect.DeepEqual(stateAfter, stateBefore) {
-				t.Fatalf("rebuild changed retained history: before=%v after=%v states=%#v / %#v", before, after, stateBefore, stateAfter)
+			if stateAfter.Status != "ready" || stateAfter.CoverageEventID < stateAfter.TargetEventID {
+				t.Fatalf("retained rebuild state = %#v", stateAfter)
+			}
+			if after := pricingCoverageCounts(t, sqlDB); after != before {
+				t.Fatalf("retained rebuild changed historical coverage: before=%v after=%v", before, after)
 			}
 		})
 	}
