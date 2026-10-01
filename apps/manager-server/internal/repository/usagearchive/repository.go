@@ -1725,7 +1725,7 @@ func loadHourlyAggregateCoverageState(ctx context.Context, tx *sql.Tx) (hourlyAg
 
 func archiveSafeCoverageStatus(status string) bool {
 	switch status {
-	case derivedStatusReady, "catching_up", "failed":
+	case derivedStatusReady, "catching_up":
 		return true
 	default:
 		return false
