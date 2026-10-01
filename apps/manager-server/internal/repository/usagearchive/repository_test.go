@@ -1689,9 +1689,8 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 	}
 }
 
-
 func TestRepositoryDeleteAllowsCommittedCoverageInStableRuntimeStates(t *testing.T) {
-	for _, status := range []string{derivedStatusReady, "catching_up", "failed"} {
+	for _, status := range []string{derivedStatusReady, "catching_up"} {
 		t.Run("derived "+status, func(t *testing.T) {
 			if err := validateDerivedCoverage(
 				"test",
@@ -1722,7 +1721,7 @@ func TestRepositoryDeleteAllowsCommittedCoverageInStableRuntimeStates(t *testing
 		})
 	}
 
-	for _, status := range []string{"pending", "clearing", "rebuilding", "backfilling", "unknown"} {
+	for _, status := range []string{"failed", "pending", "clearing", "rebuilding", "backfilling", "unknown"} {
 		t.Run("unsafe "+status, func(t *testing.T) {
 			if err := validateDerivedCoverage(
 				"test",
@@ -1740,13 +1739,53 @@ func TestRepositoryDeleteAllowsCommittedCoverageInStableRuntimeStates(t *testing
 	}
 }
 
-func TestRepositoryDeleteAllowsPricingFailureAfterCommittedCoverage(t *testing.T) {
+func TestRepositoryDeleteAllowsPricingSQLiteBusyAfterCommittedCoverage(t *testing.T) {
 	ctx := context.Background()
-	db, repository, run := prepareVerifiedArchiveRun(t, "pricing-failed-covered-"+fmt.Sprint(time.Now().UnixNano()))
+	db, repository, run := prepareVerifiedArchiveRun(t, "pricing-busy-covered-"+fmt.Sprint(time.Now().UnixNano()))
 
 	pricing := usagepricing.New(db)
 	if err := pricing.RecordFailure(ctx, errors.New("database is locked (SQLITE_BUSY)"), 60_000); err != nil {
-		t.Fatalf("record pricing failure: %v", err)
+		t.Fatalf("record pricing sqlite busy: %v", err)
+	}
+
+	var status string
+	var coverage int64
+	if err := db.QueryRow(`select status, coverage_event_id
+		from usage_pricing_rollup_state where rollup_name = ?`, usagepricing.RollupName).Scan(&status, &coverage); err != nil {
+		t.Fatalf("read pricing state after sqlite busy: %v", err)
+	}
+	if status != derivedStatusReady || coverage < run.TargetEventID {
+		t.Fatalf("pricing state = status:%q coverage:%d target:%d, want ready with committed coverage", status, coverage, run.TargetEventID)
+	}
+
+	if _, err := repository.BeginDelete(ctx, run.ID, 60_001); err != nil {
+		t.Fatalf("begin delete after covered sqlite busy: %v", err)
+	}
+	result, err := repository.DeleteBatch(ctx, run.ID, 100, 60_002)
+	if err != nil {
+		t.Fatalf("delete after covered sqlite busy: %v", err)
+	}
+	if !result.Completed || result.Run.DeletedEventCount != run.EventCount {
+		t.Fatalf("delete result = %#v, want completed count %d", result, run.EventCount)
+	}
+}
+
+func TestRepositoryDeleteRejectsFailedPricingAfterNonTransientCatchUpError(t *testing.T) {
+	ctx := context.Background()
+	db, repository, run := prepareVerifiedArchiveRun(t, "pricing-hard-failure-"+fmt.Sprint(time.Now().UnixNano()))
+
+	if _, err := usageevent.New(db).InsertBatch(ctx, archiveTestEvents()[2:]); err != nil {
+		t.Fatalf("insert pricing tail event: %v", err)
+	}
+	archiveTestExec(t, db, `drop table usage_pricing_hourly_rollups_v1`)
+
+	pricing := usagepricing.New(db)
+	_, catchUpErr := pricing.CatchUp(ctx, 100, 61_000)
+	if catchUpErr == nil {
+		t.Fatal("pricing catch-up after dropping rollup table succeeded, want failure")
+	}
+	if err := pricing.RecordFailure(ctx, catchUpErr, 61_001); err != nil {
+		t.Fatalf("record non-transient pricing failure: %v", err)
 	}
 
 	var status string
@@ -1756,18 +1795,18 @@ func TestRepositoryDeleteAllowsPricingFailureAfterCommittedCoverage(t *testing.T
 		t.Fatalf("read failed pricing state: %v", err)
 	}
 	if status != "failed" || coverage < run.TargetEventID {
-		t.Fatalf("pricing state = status:%q coverage:%d target:%d, want failed with committed coverage", status, coverage, run.TargetEventID)
+		t.Fatalf("pricing state = status:%q coverage:%d target:%d, want failed with retained committed coverage", status, coverage, run.TargetEventID)
 	}
 
-	if _, err := repository.BeginDelete(ctx, run.ID, 60_001); err != nil {
-		t.Fatalf("begin delete with covered failed pricing state: %v", err)
+	if _, err := repository.BeginDelete(ctx, run.ID, 61_002); !errors.Is(err, ErrCoverageIncomplete) {
+		t.Fatalf("begin delete with failed pricing state error = %v, want coverage incomplete", err)
 	}
-	result, err := repository.DeleteBatch(ctx, run.ID, 100, 60_002)
-	if err != nil {
-		t.Fatalf("delete with covered failed pricing state: %v", err)
+	var rawCount int64
+	if err := db.QueryRow(`select count(*) from usage_events`).Scan(&rawCount); err != nil {
+		t.Fatalf("count raw events after rejected delete: %v", err)
 	}
-	if !result.Completed || result.Run.DeletedEventCount != run.EventCount {
-		t.Fatalf("delete result = %#v, want completed count %d", result, run.EventCount)
+	if rawCount != 3 {
+		t.Fatalf("raw events after rejected delete = %d, want 3", rawCount)
 	}
 }
 
