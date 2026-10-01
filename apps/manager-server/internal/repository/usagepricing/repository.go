@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/model"
-	sqliterepo "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/sqlite"
+	sqliteutil "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/sqliteutil"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usageprojection"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
@@ -366,7 +366,7 @@ func (r *repository) RecordFailure(ctx context.Context, rollupErr error, nowMS i
 	if rollupErr == nil || nowMS <= 0 {
 		return nil
 	}
-	if sqliterepo.IsBusyError(rollupErr) {
+	if sqliteutil.IsBusyError(rollupErr) {
 		return nil
 	}
 	_, err := r.db.ExecContext(ctx, `update usage_pricing_rollup_state set
