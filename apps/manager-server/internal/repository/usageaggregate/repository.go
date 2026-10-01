@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	sqliterepo "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/sqlite"
+	sqliteutil "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/sqliteutil"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usageprojection"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
@@ -308,7 +308,7 @@ func (r *repository) RecordFailure(ctx context.Context, aggregateErr error, nowM
 	if aggregateErr == nil || nowMS <= 0 {
 		return nil
 	}
-	if sqliterepo.IsBusyError(aggregateErr) {
+	if sqliteutil.IsBusyError(aggregateErr) {
 		return nil
 	}
 	_, err := r.db.ExecContext(ctx, `update usage_hourly_aggregate_state set
