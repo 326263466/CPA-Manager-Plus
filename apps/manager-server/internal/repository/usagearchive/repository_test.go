@@ -1434,7 +1434,7 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 		{
 			name: "hourly aggregate status",
 			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
-				archiveTestExec(t, db, `update usage_hourly_aggregate_state set status = 'failed'
+				archiveTestExec(t, db, `update usage_hourly_aggregate_state set status = 'backfilling'
 					where aggregate_name = ?`, usageaggregate.AggregateName)
 				return func() {
 					archiveTestExec(t, db, `update usage_hourly_aggregate_state set status = 'ready'
@@ -1480,7 +1480,7 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 		{
 			name: "pricing status",
 			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
-				archiveTestExec(t, db, `update usage_pricing_rollup_state set status = 'failed'
+				archiveTestExec(t, db, `update usage_pricing_rollup_state set status = 'rebuilding'
 					where rollup_name = ?`, usagepricing.RollupName)
 				return func() {
 					archiveTestExec(t, db, `update usage_pricing_rollup_state set status = 'ready'
@@ -1515,7 +1515,7 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 		{
 			name: "monitoring stats status",
 			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
-				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'failed'
+				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'rebuilding'
 					where rollup_name = ?`, usagemonitoring.StatsRollupName)
 				return func() {
 					archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'ready'
@@ -1537,7 +1537,7 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 		{
 			name: "monitoring metadata status",
 			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
-				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'failed'
+				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'rebuilding'
 					where rollup_name = ?`, usagemonitoring.MetadataRollupName)
 				return func() {
 					archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'ready'
@@ -1572,7 +1572,7 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 		{
 			name: "monitoring projection status",
 			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
-				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'failed'
+				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'rebuilding'
 					where rollup_name = ?`, usagemonitoring.ProjectionRollupName)
 				return func() {
 					archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'ready'
@@ -1607,7 +1607,7 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 		{
 			name: "codex legacy identity evidence status",
 			mutate: func(t *testing.T, db *sql.DB, _ Run) func() {
-				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'failed'
+				archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'clearing'
 					where rollup_name = ?`, usageevent.CodexLegacyIdentityRollupName)
 				return func() {
 					archiveTestExec(t, db, `update usage_monitoring_rollup_state set status = 'ready'
@@ -1686,6 +1686,88 @@ func TestRepositoryDeleteRequiresEveryCurrentDerivedCoverageGate(t *testing.T) {
 				t.Fatalf("delete batch after restoring %s: result=%#v err=%v", test.name, result, err)
 			}
 		})
+	}
+}
+
+
+func TestRepositoryDeleteAllowsCommittedCoverageInStableRuntimeStates(t *testing.T) {
+	for _, status := range []string{derivedStatusReady, "catching_up", "failed"} {
+		t.Run("derived "+status, func(t *testing.T) {
+			if err := validateDerivedCoverage(
+				"test",
+				1,
+				1,
+				"revision",
+				"revision",
+				status,
+				10,
+				10,
+			); err != nil {
+				t.Fatalf("covered derived state %q rejected: %v", status, err)
+			}
+		})
+		t.Run("hourly "+status, func(t *testing.T) {
+			err := validateHourlyAggregateCoverage(
+				Run{TargetEventID: 10},
+				hourlyAggregateCoverageState{
+					SchemaVersion:     usageaggregate.SchemaVersion,
+					StructureRevision: usageaggregate.StructureRevision,
+					Status:            status,
+					CoverageEventID:   10,
+				},
+			)
+			if err != nil {
+				t.Fatalf("covered hourly state %q rejected: %v", status, err)
+			}
+		})
+	}
+
+	for _, status := range []string{"pending", "clearing", "rebuilding", "backfilling", "unknown"} {
+		t.Run("unsafe "+status, func(t *testing.T) {
+			if err := validateDerivedCoverage(
+				"test",
+				1,
+				1,
+				"revision",
+				"revision",
+				status,
+				10,
+				10,
+			); !errors.Is(err, ErrCoverageIncomplete) {
+				t.Fatalf("unsafe derived state %q error = %v, want coverage incomplete", status, err)
+			}
+		})
+	}
+}
+
+func TestRepositoryDeleteAllowsPricingFailureAfterCommittedCoverage(t *testing.T) {
+	ctx := context.Background()
+	db, repository, run := prepareVerifiedArchiveRun(t, "pricing-failed-covered-"+fmt.Sprint(time.Now().UnixNano()))
+
+	pricing := usagepricing.New(db)
+	if err := pricing.RecordFailure(ctx, errors.New("database is locked (SQLITE_BUSY)"), 60_000); err != nil {
+		t.Fatalf("record pricing failure: %v", err)
+	}
+
+	var status string
+	var coverage int64
+	if err := db.QueryRow(`select status, coverage_event_id
+		from usage_pricing_rollup_state where rollup_name = ?`, usagepricing.RollupName).Scan(&status, &coverage); err != nil {
+		t.Fatalf("read failed pricing state: %v", err)
+	}
+	if status != "failed" || coverage < run.TargetEventID {
+		t.Fatalf("pricing state = status:%q coverage:%d target:%d, want failed with committed coverage", status, coverage, run.TargetEventID)
+	}
+
+	if _, err := repository.BeginDelete(ctx, run.ID, 60_001); err != nil {
+		t.Fatalf("begin delete with covered failed pricing state: %v", err)
+	}
+	result, err := repository.DeleteBatch(ctx, run.ID, 100, 60_002)
+	if err != nil {
+		t.Fatalf("delete with covered failed pricing state: %v", err)
+	}
+	if !result.Completed || result.Run.DeletedEventCount != run.EventCount {
+		t.Fatalf("delete result = %#v, want completed count %d", result, run.EventCount)
 	}
 }
 
