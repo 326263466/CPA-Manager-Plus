@@ -17,22 +17,6 @@ func Open(path string) (*sql.DB, error) {
 	return OpenWithOptions(Options{Path: path})
 }
 
-func IsBusyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	var sqliteErr *sqlite.Error
-	if errors.As(err, &sqliteErr) {
-		code := sqliteErr.Code() & 0xff
-		return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "sqlite_busy") ||
-		strings.Contains(message, "sqlite_locked") ||
-		strings.Contains(message, "database is locked") ||
-		strings.Contains(message, "database table is locked")
-}
-
 func OpenWithOptions(options Options) (*sql.DB, error) {
 	dbPath, err := filepath.Abs(options.Path)
 	if err != nil {
