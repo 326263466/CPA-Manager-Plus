@@ -89,6 +89,11 @@ vi.mock('@/components/config/VisualConfigEditor', () => ({
         <button type="button" data-test="enable-debug" onClick={() => onChange({ debug: true })} />
         <button
           type="button"
+          data-test="enable-commercial"
+          onClick={() => onChange({ commercialMode: true })}
+        />
+        <button
+          type="button"
           data-test="create-key"
           onClick={() => runMutation({ type: 'create', apiKey: 'sk-new' })}
         />
@@ -539,6 +544,35 @@ describe('ConfigPage v8 API-key persistence with the real visual config hook', (
       expect(displayedKeys()).toBe(expectedKeys.join('\n'));
     }
   );
+});
+
+describe('ConfigPage CPA v8 visual persistence', () => {
+  it('saves commercial mode to server.commercial-mode and emits the restart warning', async () => {
+    mocks.useRealVisualConfig = true;
+    let serverConfig: {
+      'config-version': number;
+      server: { 'commercial-mode': boolean };
+    } = {
+      'config-version': 8,
+      server: { 'commercial-mode': false },
+    };
+    mocks.fetchConfigYaml.mockImplementation(async () => stringifyYaml(serverConfig));
+    mocks.saveConfigYaml.mockImplementation(async (yaml: string) => {
+      serverConfig = parseYaml(yaml) as typeof serverConfig;
+    });
+
+    await mountPage();
+    await click('enable-commercial');
+    await clickSave();
+    await click('confirm-save');
+
+    expect(serverConfig.server['commercial-mode']).toBe(true);
+    expect(serverConfig).not.toHaveProperty('commercial-mode');
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'notification.commercial_mode_restart_required',
+      'warning'
+    );
+  });
 });
 
 describe('ConfigPage API-key source snapshot safety', () => {
