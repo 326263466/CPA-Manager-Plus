@@ -317,7 +317,15 @@ function readCommercialModeFromYaml(yamlContent: string): boolean {
   try {
     const parsed = parseYaml(yamlContent);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
-    return Boolean((parsed as Record<string, unknown>)['commercial-mode']);
+    const root = parsed as Record<string, unknown>;
+    const server =
+      root.server && typeof root.server === 'object' && !Array.isArray(root.server)
+        ? (root.server as Record<string, unknown>)
+        : null;
+    if (server && Object.prototype.hasOwnProperty.call(server, 'commercial-mode')) {
+      return Boolean(server['commercial-mode']);
+    }
+    return Boolean(root['commercial-mode']);
   } catch {
     return false;
   }
