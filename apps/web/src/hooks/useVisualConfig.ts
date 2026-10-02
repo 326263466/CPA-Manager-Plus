@@ -296,13 +296,25 @@ function readObjectPath(
   return { found: true, value: current };
 }
 
-function readVisualConfigValue(parsed: Record<string, unknown>, legacyPath: YamlPath): unknown {
+function readVisualConfigValue(
+  parsed: Record<string, unknown>,
+  legacyPath: YamlPath,
+  aliases: YamlPath[] = []
+): unknown {
   const canonicalPath = mapVisualConfigV8Path(legacyPath);
   if (!pathsEqual(canonicalPath, legacyPath)) {
     const canonical = readObjectPath(parsed, canonicalPath);
     if (canonical.found) return canonical.value;
   }
-  return readObjectPath(parsed, legacyPath).value;
+
+  const legacy = readObjectPath(parsed, legacyPath);
+  if (legacy.found) return legacy.value;
+
+  for (const alias of aliases) {
+    const fallback = readObjectPath(parsed, alias);
+    if (fallback.found) return fallback.value;
+  }
+  return undefined;
 }
 
 function isV8VisualConfigLayout(parsed: Record<string, unknown>): boolean {
@@ -942,7 +954,8 @@ export function useVisualConfig() {
 
       const parsedRaw: unknown = parseYaml(yamlContent) || {};
       const parsed = asRecord(parsedRaw) ?? {};
-      const readCompat = (path: YamlPath) => readVisualConfigValue(parsed, path);
+      const readCompat = (path: YamlPath, aliases: YamlPath[] = []) =>
+        readVisualConfigValue(parsed, path, aliases);
       const tls = asRecord(readCompat(['tls']));
       const remoteManagement = asRecord(readCompat(['remote-management']));
       const pprof = asRecord(readCompat(['pprof']));
@@ -994,16 +1007,17 @@ export function useVisualConfig() {
         pprofAddr: typeof pprof?.addr === 'string' ? pprof.addr : '127.0.0.1:8316',
         commercialMode: Boolean(readCompat(['commercial-mode'])),
         usageStatisticsEnabled: Boolean(
-          readCompat(['usage-statistics-enabled']) ?? parsed.usageStatisticsEnabled
+          readCompat(['usage-statistics-enabled'], [['usageStatisticsEnabled']])
         ),
         loggingToFile: Boolean(readCompat(['logging-to-file'])),
         requestLog: Boolean(readCompat(['request-log'])),
         logsMaxTotalSizeMb: String(readCompat(['logs-max-total-size-mb']) ?? ''),
         errorLogsMaxFiles: String(readCompat(['error-logs-max-files']) ?? ''),
         redisUsageQueueRetentionSeconds: String(
-          readCompat(['redis-usage-queue-retention-seconds']) ??
-            parsed.redisUsageQueueRetentionSeconds ??
-            ''
+          readCompat(
+            ['redis-usage-queue-retention-seconds'],
+            [['redisUsageQueueRetentionSeconds']]
+          ) ?? ''
         ),
 
         proxyUrl:
