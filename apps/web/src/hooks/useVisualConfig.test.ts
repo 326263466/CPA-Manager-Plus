@@ -168,6 +168,270 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
+  it('loads CPA v8 canonical paths across existing visual config groups', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = [
+      'config-version: 8',
+      'server:',
+      '  host: 0.0.0.0',
+      '  port: 9443',
+      '  tls:',
+      '    enable: true',
+      '    cert: /cert.pem',
+      '    key: /key.pem',
+      '  commercial-mode: true',
+      'management:',
+      '  allow-remote: true',
+      "  secret-key: '$2a$10$existing'",
+      '  disable-control-panel: true',
+      '  disable-auto-update-panel: true',
+      '  panel-github-repository: https://github.com/seakee/CPA-Manager-Plus',
+      'oauth:',
+      '  auth-dir: /data/auth',
+      '  auth-auto-refresh-workers: 4',
+      '  providers:',
+      '    aistudio:',
+      '      ws-auth: false',
+      '    antigravity:',
+      '      signature-cache-enabled: false',
+      '      signature-bypass-strict: true',
+      '      antigravity-credits: true',
+      '    codex:',
+      '      identity-confuse: true',
+      '      header-defaults:',
+      '        user-agent: codex-test',
+      '        beta-features: feature-a',
+      '    devin:',
+      '      sensitive-words: [alpha, beta]',
+      'upstream:',
+      '  claude:',
+      '    disable-claude-cloak-mode: true',
+      '    header-defaults:',
+      '      user-agent: claude-test',
+      '      package-version: 2.1.0',
+      '      stabilize-device-profile: true',
+      'observability:',
+      '  logs:',
+      '    debug: true',
+      '    logging-to-file: true',
+      '    request-log: true',
+      '    logs-max-total-size-mb: 256',
+      '    error-logs-max-files: 8',
+      '  usage:',
+      '    usage-statistics-enabled: true',
+      '    redis-usage-queue-retention-seconds: 120',
+      '  pprof:',
+      '    enable: true',
+      '    addr: 127.0.0.1:9316',
+      'requests:',
+      '  proxy-url: http://proxy.local:8080',
+      '  passthrough-headers: true',
+      '  nonstream-keepalive-interval: 9',
+      '  streaming:',
+      '    keepalive-seconds: 15',
+      '    bootstrap-retries: 2',
+      '  payload:',
+      '    default: []',
+      'routing:',
+      '  strategy: weighted-round-robin',
+      '  session-affinity: true',
+      '  session-affinity-ttl: 2h',
+      '  force-model-prefix: true',
+      '  retry:',
+      '    request-retry: 4',
+      '    max-retry-credentials: 5',
+      '    max-retry-interval: 6',
+      '  cooldown:',
+      '    disable-cooling: true',
+      '    save-cooldown-status: true',
+      '    transient-error-cooldown-seconds: 7',
+      'multimedia:',
+      '  disable-image-generation: chat',
+      '  gpt-image-2-base-model: gpt-image-test',
+      '  video-result-auth-cache-ttl: 45m',
+      'quota-exceeded:',
+      '  switch-project: true',
+      '  switch-preview-model: true',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    expect(harness.getCurrent().visualValues).toEqual(
+      expect.objectContaining({
+        host: '0.0.0.0',
+        port: '9443',
+        tlsEnable: true,
+        tlsCert: '/cert.pem',
+        tlsKey: '/key.pem',
+        commercialMode: true,
+        rmAllowRemote: true,
+        rmSecretKeyConfigured: true,
+        rmDisableControlPanel: true,
+        rmDisableAutoUpdatePanel: true,
+        rmPanelRepo: 'https://github.com/seakee/CPA-Manager-Plus',
+        authDir: '/data/auth',
+        authAutoRefreshWorkers: '4',
+        debug: true,
+        loggingToFile: true,
+        requestLog: true,
+        logsMaxTotalSizeMb: '256',
+        errorLogsMaxFiles: '8',
+        usageStatisticsEnabled: true,
+        redisUsageQueueRetentionSeconds: '120',
+        pprofEnable: true,
+        pprofAddr: '127.0.0.1:9316',
+        proxyUrl: 'http://proxy.local:8080',
+        passthroughHeaders: true,
+        forceModelPrefix: true,
+        requestRetry: '4',
+        maxRetryCredentials: '5',
+        maxRetryInterval: '6',
+        disableCooling: true,
+        saveCooldownStatus: true,
+        transientErrorCooldownSeconds: '7',
+        disableClaudeCloakMode: true,
+        disableImageGeneration: 'chat',
+        gptImage2BaseModel: 'gpt-image-test',
+        videoResultAuthCacheTtl: '45m',
+        wsAuth: false,
+        antigravitySignatureCacheEnabled: false,
+        antigravitySignatureBypassStrict: true,
+        quotaAntigravityCredits: true,
+        claudeHeaderUserAgent: 'claude-test',
+        claudeHeaderPackageVersion: '2.1.0',
+        claudeHeaderStabilizeDeviceProfile: true,
+        codexHeaderUserAgent: 'codex-test',
+        codexHeaderBetaFeatures: 'feature-a',
+        codexIdentityConfuse: true,
+        devinSensitiveWords: ['alpha', 'beta'],
+        routingStrategy: 'weighted-round-robin',
+        routingSessionAffinity: true,
+        routingSessionAffinityTTL: '2h',
+        quotaSwitchProject: true,
+        quotaSwitchPreviewModel: true,
+        streaming: {
+          keepaliveSeconds: '15',
+          bootstrapRetries: '2',
+          nonstreamKeepaliveInterval: '9',
+        },
+      })
+    );
+    harness.unmount();
+  });
+
+  it('gives explicit v8 values precedence and writes dirty legacy fallbacks to canonical paths', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = [
+      'config-version: 8',
+      'management:',
+      '  allow-remote: false',
+      'remote-management:',
+      '  allow-remote: true',
+      'observability:',
+      '  usage:',
+      '    usage-statistics-enabled: false',
+      'usage-statistics-enabled: true',
+      'requests:',
+      "  proxy-url: ''",
+      'proxy-url: http://stale.proxy',
+      'routing:',
+      '  retry:',
+      '    request-retry: 0',
+      'request-retry: 9',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.rmAllowRemote).toBe(false);
+    expect(harness.getCurrent().visualValues.usageStatisticsEnabled).toBe(false);
+    expect(harness.getCurrent().visualValues.proxyUrl).toBe('');
+    expect(harness.getCurrent().visualValues.requestRetry).toBe('0');
+    harness.unmount();
+
+    const writeHarness = mountUseVisualConfig();
+    const legacyFallbacks = [
+      'config-version: 8',
+      'remote-management:',
+      '  allow-remote: true',
+      'usage-statistics-enabled: true',
+      'proxy-url: http://legacy.proxy',
+      'request-retry: 3',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(writeHarness.getCurrent().loadVisualValuesFromYaml(legacyFallbacks).ok).toBe(true);
+      writeHarness.getCurrent().setVisualValues({
+        rmAllowRemote: false,
+        usageStatisticsEnabled: false,
+        proxyUrl: '',
+        requestRetry: '0',
+      });
+    });
+
+    const updated = writeHarness.getCurrent().applyVisualChangesToYaml(legacyFallbacks);
+    const parsed = parseYaml(updated) as Record<string, any>;
+    expect(parsed.management?.['allow-remote']).toBe(false);
+    expect(parsed.observability?.usage?.['usage-statistics-enabled']).toBe(false);
+    expect(parsed.requests?.['proxy-url']).toBe('');
+    expect(parsed.routing?.retry?.['request-retry']).toBe(0);
+    expect(parsed['remote-management']).toBeUndefined();
+    expect(parsed['usage-statistics-enabled']).toBeUndefined();
+    expect(parsed['proxy-url']).toBeUndefined();
+    expect(parsed['request-retry']).toBeUndefined();
+
+    act(() => {
+      expect(writeHarness.getCurrent().loadVisualValuesFromYaml(updated).ok).toBe(true);
+    });
+    expect(writeHarness.getCurrent().visualValues.rmAllowRemote).toBe(false);
+    expect(writeHarness.getCurrent().visualValues.usageStatisticsEnabled).toBe(false);
+    expect(writeHarness.getCurrent().visualValues.proxyUrl).toBe('');
+    expect(writeHarness.getCurrent().visualValues.requestRetry).toBe('0');
+    writeHarness.unmount();
+  });
+
+  it('keeps v8 management secrets on the canonical management path', () => {
+    const harness = mountUseVisualConfig();
+    const hash = '$2a$10$existing-management-hash';
+    const yaml = [
+      'config-version: 8',
+      'management:',
+      `  secret-key: '${hash}'`,
+      '  allow-remote: false',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({ rmAllowRemote: true });
+    });
+
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    const parsed = parseYaml(updated) as {
+      management?: Record<string, unknown>;
+      'remote-management'?: Record<string, unknown>;
+    };
+    expect(parsed.management?.['secret-key']).toBe(hash);
+    expect(parsed.management?.['allow-remote']).toBe(true);
+    expect(parsed['remote-management']).toBeUndefined();
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(updated).ok).toBe(true);
+      harness.getCurrent().setVisualValues({ rmSecretKey: '', rmSecretKeyAction: 'clear' });
+    });
+
+    const cleared = parseYaml(harness.getCurrent().applyVisualChangesToYaml(updated)) as {
+      management?: Record<string, unknown>;
+    };
+    expect(cleared.management?.['secret-key']).toBe('');
+    harness.unmount();
+  });
+
   it('clears the page dirty state when API keys are the only changed field', () => {
     const harness = mountUseVisualConfig();
     const initialYaml = ['proxy-url: http://proxy.local:8080', 'api-keys:', '  - old-key', ''].join(
