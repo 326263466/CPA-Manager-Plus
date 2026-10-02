@@ -375,7 +375,16 @@ describe('useVisualConfig', () => {
     });
 
     const updated = writeHarness.getCurrent().applyVisualChangesToYaml(legacyFallbacks);
-    const parsed = parseYaml(updated) as Record<string, any>;
+    const parsed = parseYaml(updated) as {
+      management?: Record<string, unknown>;
+      observability?: { usage?: Record<string, unknown> };
+      requests?: Record<string, unknown>;
+      routing?: { retry?: Record<string, unknown> };
+      'remote-management'?: unknown;
+      'usage-statistics-enabled'?: unknown;
+      'proxy-url'?: unknown;
+      'request-retry'?: unknown;
+    };
     expect(parsed.management?.['allow-remote']).toBe(false);
     expect(parsed.observability?.usage?.['usage-statistics-enabled']).toBe(false);
     expect(parsed.requests?.['proxy-url']).toBe('');
