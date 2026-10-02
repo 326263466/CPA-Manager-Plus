@@ -162,6 +162,178 @@ function resolveApiKeysText(parsed: Record<string, unknown>): string {
 type YamlDocument = ReturnType<typeof parseDocument>;
 type YamlPath = string[];
 
+type VisualConfigPathMapping = {
+  legacy: YamlPath;
+  canonical: YamlPath;
+};
+
+const VISUAL_CONFIG_V8_PATH_MAPPINGS: VisualConfigPathMapping[] = [
+  { legacy: ['host'], canonical: ['server', 'host'] },
+  { legacy: ['port'], canonical: ['server', 'port'] },
+  { legacy: ['tls'], canonical: ['server', 'tls'] },
+  { legacy: ['commercial-mode'], canonical: ['server', 'commercial-mode'] },
+  { legacy: ['remote-management'], canonical: ['management'] },
+  { legacy: ['force-model-prefix'], canonical: ['routing', 'force-model-prefix'] },
+  { legacy: ['request-retry'], canonical: ['routing', 'retry', 'request-retry'] },
+  {
+    legacy: ['max-retry-credentials'],
+    canonical: ['routing', 'retry', 'max-retry-credentials'],
+  },
+  { legacy: ['max-retry-interval'], canonical: ['routing', 'retry', 'max-retry-interval'] },
+  { legacy: ['disable-cooling'], canonical: ['routing', 'cooldown', 'disable-cooling'] },
+  {
+    legacy: ['save-cooldown-status'],
+    canonical: ['routing', 'cooldown', 'save-cooldown-status'],
+  },
+  {
+    legacy: ['transient-error-cooldown-seconds'],
+    canonical: ['routing', 'cooldown', 'transient-error-cooldown-seconds'],
+  },
+  { legacy: ['proxy-url'], canonical: ['requests', 'proxy-url'] },
+  { legacy: ['passthrough-headers'], canonical: ['requests', 'passthrough-headers'] },
+  {
+    legacy: ['nonstream-keepalive-interval'],
+    canonical: ['requests', 'nonstream-keepalive-interval'],
+  },
+  { legacy: ['streaming'], canonical: ['requests', 'streaming'] },
+  { legacy: ['payload'], canonical: ['requests', 'payload'] },
+  { legacy: ['auth-dir'], canonical: ['oauth', 'auth-dir'] },
+  {
+    legacy: ['auth-auto-refresh-workers'],
+    canonical: ['oauth', 'auth-auto-refresh-workers'],
+  },
+  { legacy: ['ws-auth'], canonical: ['oauth', 'providers', 'aistudio', 'ws-auth'] },
+  {
+    legacy: ['codex-header-defaults'],
+    canonical: ['oauth', 'providers', 'codex', 'header-defaults'],
+  },
+  { legacy: ['codex'], canonical: ['oauth', 'providers', 'codex'] },
+  {
+    legacy: ['disable-claude-cloak-mode'],
+    canonical: ['upstream', 'claude', 'disable-claude-cloak-mode'],
+  },
+  {
+    legacy: ['claude-header-defaults'],
+    canonical: ['upstream', 'claude', 'header-defaults'],
+  },
+  {
+    legacy: ['antigravity-signature-cache-enabled'],
+    canonical: ['oauth', 'providers', 'antigravity', 'signature-cache-enabled'],
+  },
+  {
+    legacy: ['antigravity-signature-bypass-strict'],
+    canonical: ['oauth', 'providers', 'antigravity', 'signature-bypass-strict'],
+  },
+  {
+    legacy: ['quota-exceeded', 'antigravity-credits'],
+    canonical: ['oauth', 'providers', 'antigravity', 'antigravity-credits'],
+  },
+  { legacy: ['devin'], canonical: ['oauth', 'providers', 'devin'] },
+  {
+    legacy: ['disable-image-generation'],
+    canonical: ['multimedia', 'disable-image-generation'],
+  },
+  { legacy: ['gpt-image-2-base-model'], canonical: ['multimedia', 'gpt-image-2-base-model'] },
+  {
+    legacy: ['video-result-auth-cache-ttl'],
+    canonical: ['multimedia', 'video-result-auth-cache-ttl'],
+  },
+  { legacy: ['debug'], canonical: ['observability', 'logs', 'debug'] },
+  {
+    legacy: ['logging-to-file'],
+    canonical: ['observability', 'logs', 'logging-to-file'],
+  },
+  {
+    legacy: ['logs-max-total-size-mb'],
+    canonical: ['observability', 'logs', 'logs-max-total-size-mb'],
+  },
+  { legacy: ['request-log'], canonical: ['observability', 'logs', 'request-log'] },
+  {
+    legacy: ['error-logs-max-files'],
+    canonical: ['observability', 'logs', 'error-logs-max-files'],
+  },
+  {
+    legacy: ['usage-statistics-enabled'],
+    canonical: ['observability', 'usage', 'usage-statistics-enabled'],
+  },
+  {
+    legacy: ['redis-usage-queue-retention-seconds'],
+    canonical: ['observability', 'usage', 'redis-usage-queue-retention-seconds'],
+  },
+  { legacy: ['pprof'], canonical: ['observability', 'pprof'] },
+];
+
+function pathsEqual(left: YamlPath, right: YamlPath): boolean {
+  return left.length === right.length && left.every((part, index) => part === right[index]);
+}
+
+function pathStartsWith(path: YamlPath, prefix: YamlPath): boolean {
+  return prefix.length <= path.length && prefix.every((part, index) => path[index] === part);
+}
+
+function mapVisualConfigV8Path(path: YamlPath): YamlPath {
+  let best: VisualConfigPathMapping | null = null;
+  for (const mapping of VISUAL_CONFIG_V8_PATH_MAPPINGS) {
+    if (!pathStartsWith(path, mapping.legacy)) continue;
+    if (!best || mapping.legacy.length > best.legacy.length) best = mapping;
+  }
+  if (!best) return path;
+  return [...best.canonical, ...path.slice(best.legacy.length)];
+}
+
+function readObjectPath(
+  root: Record<string, unknown>,
+  path: YamlPath
+): { found: boolean; value: unknown } {
+  let current: unknown = root;
+  for (const part of path) {
+    const record = asRecord(current);
+    if (!record || !Object.prototype.hasOwnProperty.call(record, part)) {
+      return { found: false, value: undefined };
+    }
+    current = record[part];
+  }
+  return { found: true, value: current };
+}
+
+function readVisualConfigValue(parsed: Record<string, unknown>, legacyPath: YamlPath): unknown {
+  const canonicalPath = mapVisualConfigV8Path(legacyPath);
+  if (!pathsEqual(canonicalPath, legacyPath)) {
+    const canonical = readObjectPath(parsed, canonicalPath);
+    if (canonical.found) return canonical.value;
+  }
+  return readObjectPath(parsed, legacyPath).value;
+}
+
+function isV8VisualConfigLayout(parsed: Record<string, unknown>): boolean {
+  const configVersion = parsed['config-version'];
+  if (configVersion === 8 || configVersion === '8') return true;
+
+  for (const root of [
+    'server',
+    'management',
+    'access',
+    'credentials',
+    'requests',
+    'oauth',
+    'upstream',
+    'multimedia',
+    'observability',
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(parsed, root)) return true;
+  }
+
+  if (asRecord(parsed['api-keys'])) return true;
+
+  const routing = asRecord(parsed.routing);
+  return Boolean(
+    routing &&
+      ['force-model-prefix', 'retry', 'cooldown'].some((key) =>
+        Object.prototype.hasOwnProperty.call(routing, key)
+      )
+  );
+}
+
 function docHas(doc: YamlDocument, path: YamlPath): boolean {
   return doc.hasIn(path);
 }
@@ -770,22 +942,23 @@ export function useVisualConfig() {
 
       const parsedRaw: unknown = parseYaml(yamlContent) || {};
       const parsed = asRecord(parsedRaw) ?? {};
-      const tls = asRecord(parsed.tls);
-      const remoteManagement = asRecord(parsed['remote-management']);
-      const pprof = asRecord(parsed.pprof);
+      const readCompat = (path: YamlPath) => readVisualConfigValue(parsed, path);
+      const tls = asRecord(readCompat(['tls']));
+      const remoteManagement = asRecord(readCompat(['remote-management']));
+      const pprof = asRecord(readCompat(['pprof']));
       const quotaExceeded = asRecord(parsed['quota-exceeded']);
       const routing = asRecord(parsed.routing);
       const plugins = asRecord(parsed.plugins);
-      const payload = asRecord(parsed.payload);
-      const streaming = asRecord(parsed.streaming);
-      const claudeHeaderDefaults = asRecord(parsed['claude-header-defaults']);
-      const codexHeaderDefaults = asRecord(parsed['codex-header-defaults']);
-      const codex = asRecord(parsed.codex);
-      const devin = asRecord(parsed.devin);
+      const payload = asRecord(readCompat(['payload']));
+      const streaming = asRecord(readCompat(['streaming']));
+      const claudeHeaderDefaults = asRecord(readCompat(['claude-header-defaults']));
+      const codexHeaderDefaults = asRecord(readCompat(['codex-header-defaults']));
+      const codex = asRecord(readCompat(['codex']));
+      const devin = asRecord(readCompat(['devin']));
 
       const newValues: VisualConfigValues = {
-        host: typeof parsed.host === 'string' ? parsed.host : '',
-        port: String(parsed.port ?? ''),
+        host: typeof readCompat(['host']) === 'string' ? (readCompat(['host']) as string) : '',
+        port: String(readCompat(['port']) ?? ''),
 
         tlsEnable: Boolean(tls?.enable),
         tlsCert: typeof tls?.cert === 'string' ? tls.cert : '',
@@ -806,7 +979,8 @@ export function useVisualConfig() {
               ? remoteManagement['panel-repo']
               : '',
 
-        authDir: typeof parsed['auth-dir'] === 'string' ? parsed['auth-dir'] : '',
+        authDir:
+          typeof readCompat(['auth-dir']) === 'string' ? (readCompat(['auth-dir']) as string) : '',
         apiKeysText: resolveApiKeysText(parsed),
         pluginsEnabled: Boolean(plugins?.enabled),
         pluginsDir: typeof plugins?.dir === 'string' ? plugins.dir : '',
@@ -815,48 +989,57 @@ export function useVisualConfig() {
         ),
         pluginStoreAuth: parsePluginStoreAuthRules(plugins?.['store-auth'] ?? plugins?.storeAuth),
 
-        debug: Boolean(parsed.debug),
+        debug: Boolean(readCompat(['debug'])),
         pprofEnable: Boolean(pprof?.enable),
         pprofAddr: typeof pprof?.addr === 'string' ? pprof.addr : '127.0.0.1:8316',
-        commercialMode: Boolean(parsed['commercial-mode']),
+        commercialMode: Boolean(readCompat(['commercial-mode'])),
         usageStatisticsEnabled: Boolean(
-          parsed['usage-statistics-enabled'] ?? parsed.usageStatisticsEnabled
+          readCompat(['usage-statistics-enabled']) ?? parsed.usageStatisticsEnabled
         ),
-        loggingToFile: Boolean(parsed['logging-to-file']),
-        requestLog: Boolean(parsed['request-log']),
-        logsMaxTotalSizeMb: String(parsed['logs-max-total-size-mb'] ?? ''),
-        errorLogsMaxFiles: String(parsed['error-logs-max-files'] ?? ''),
+        loggingToFile: Boolean(readCompat(['logging-to-file'])),
+        requestLog: Boolean(readCompat(['request-log'])),
+        logsMaxTotalSizeMb: String(readCompat(['logs-max-total-size-mb']) ?? ''),
+        errorLogsMaxFiles: String(readCompat(['error-logs-max-files']) ?? ''),
         redisUsageQueueRetentionSeconds: String(
-          parsed['redis-usage-queue-retention-seconds'] ??
+          readCompat(['redis-usage-queue-retention-seconds']) ??
             parsed.redisUsageQueueRetentionSeconds ??
             ''
         ),
 
-        proxyUrl: typeof parsed['proxy-url'] === 'string' ? parsed['proxy-url'] : '',
-        forceModelPrefix: Boolean(parsed['force-model-prefix']),
-        passthroughHeaders: Boolean(parsed['passthrough-headers']),
-        requestRetry: String(parsed['request-retry'] ?? ''),
-        maxRetryCredentials: String(parsed['max-retry-credentials'] ?? ''),
-        maxRetryInterval: String(parsed['max-retry-interval'] ?? ''),
-        disableCooling: Boolean(parsed['disable-cooling']),
-        saveCooldownStatus: Boolean(parsed['save-cooldown-status']),
-        transientErrorCooldownSeconds: String(parsed['transient-error-cooldown-seconds'] ?? ''),
-        disableClaudeCloakMode: Boolean(parsed['disable-claude-cloak-mode']),
-        disableImageGeneration: parseDisableImageGenerationMode(parsed['disable-image-generation']),
+        proxyUrl:
+          typeof readCompat(['proxy-url']) === 'string'
+            ? (readCompat(['proxy-url']) as string)
+            : '',
+        forceModelPrefix: Boolean(readCompat(['force-model-prefix'])),
+        passthroughHeaders: Boolean(readCompat(['passthrough-headers'])),
+        requestRetry: String(readCompat(['request-retry']) ?? ''),
+        maxRetryCredentials: String(readCompat(['max-retry-credentials']) ?? ''),
+        maxRetryInterval: String(readCompat(['max-retry-interval']) ?? ''),
+        disableCooling: Boolean(readCompat(['disable-cooling'])),
+        saveCooldownStatus: Boolean(readCompat(['save-cooldown-status'])),
+        transientErrorCooldownSeconds: String(
+          readCompat(['transient-error-cooldown-seconds']) ?? ''
+        ),
+        disableClaudeCloakMode: Boolean(readCompat(['disable-claude-cloak-mode'])),
+        disableImageGeneration: parseDisableImageGenerationMode(
+          readCompat(['disable-image-generation'])
+        ),
         gptImage2BaseModel:
-          typeof parsed['gpt-image-2-base-model'] === 'string'
-            ? parsed['gpt-image-2-base-model']
+          typeof readCompat(['gpt-image-2-base-model']) === 'string'
+            ? (readCompat(['gpt-image-2-base-model']) as string)
             : '',
         videoResultAuthCacheTtl:
-          typeof parsed['video-result-auth-cache-ttl'] === 'string'
-            ? parsed['video-result-auth-cache-ttl']
+          typeof readCompat(['video-result-auth-cache-ttl']) === 'string'
+            ? (readCompat(['video-result-auth-cache-ttl']) as string)
             : '',
-        authAutoRefreshWorkers: String(parsed['auth-auto-refresh-workers'] ?? ''),
-        wsAuth: Boolean(parsed['ws-auth'] ?? true),
+        authAutoRefreshWorkers: String(readCompat(['auth-auto-refresh-workers']) ?? ''),
+        wsAuth: Boolean(readCompat(['ws-auth']) ?? true),
         antigravitySignatureCacheEnabled: Boolean(
-          parsed['antigravity-signature-cache-enabled'] ?? true
+          readCompat(['antigravity-signature-cache-enabled']) ?? true
         ),
-        antigravitySignatureBypassStrict: Boolean(parsed['antigravity-signature-bypass-strict']),
+        antigravitySignatureBypassStrict: Boolean(
+          readCompat(['antigravity-signature-bypass-strict'])
+        ),
         claudeHeaderUserAgent:
           typeof claudeHeaderDefaults?.['user-agent'] === 'string'
             ? claudeHeaderDefaults['user-agent']
@@ -890,7 +1073,9 @@ export function useVisualConfig() {
 
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? false),
         quotaSwitchPreviewModel: Boolean(quotaExceeded?.['switch-preview-model'] ?? false),
-        quotaAntigravityCredits: Boolean(quotaExceeded?.['antigravity-credits'] ?? false),
+        quotaAntigravityCredits: Boolean(
+          readCompat(['quota-exceeded', 'antigravity-credits']) ?? false
+        ),
 
         routingStrategy: normalizeRoutingStrategy(routing?.strategy) ?? 'round-robin',
         routingSessionAffinity: Boolean(
@@ -914,7 +1099,9 @@ export function useVisualConfig() {
         streaming: {
           keepaliveSeconds: String(streaming?.['keepalive-seconds'] ?? ''),
           bootstrapRetries: String(streaming?.['bootstrap-retries'] ?? ''),
-          nonstreamKeepaliveInterval: String(parsed['nonstream-keepalive-interval'] ?? ''),
+          nonstreamKeepaliveInterval: String(
+            readCompat(['nonstream-keepalive-interval']) ?? ''
+          ),
         },
       };
 
@@ -937,17 +1124,140 @@ export function useVisualConfig() {
         }
         const values = visualValues;
         const isDirty = (key: string) => dirtyFields.has(key);
+        const parsedCurrent = asRecord(parseYaml(currentYaml)) ?? {};
+        const useV8Layout = isV8VisualConfigLayout(parsedCurrent);
+        const mappedPath = (path: YamlPath) =>
+          useV8Layout ? mapVisualConfigV8Path(path) : path;
+        const pruneEmptyParents = (path: YamlPath) => {
+          for (let length = path.length - 1; length >= 1; length -= 1) {
+            deleteIfMapEmpty(doc, path.slice(0, length));
+          }
+        };
+        const ensureParents = (path: YamlPath) => {
+          for (let length = 1; length < path.length; length += 1) {
+            ensureMapInDoc(doc, path.slice(0, length));
+          }
+        };
+        const legacyAlternative = (path: YamlPath, target: YamlPath) =>
+          useV8Layout && !pathsEqual(path, target) ? path : null;
+        const hasCompat = (path: YamlPath) => {
+          const target = mappedPath(path);
+          const legacy = legacyAlternative(path, target);
+          return docHas(doc, target) || Boolean(legacy && docHas(doc, legacy));
+        };
+        const deleteCompat = (path: YamlPath) => {
+          const target = mappedPath(path);
+          const legacy = legacyAlternative(path, target);
+          if (docHas(doc, target)) {
+            doc.deleteIn(target);
+            pruneEmptyParents(target);
+          }
+          if (legacy && docHas(doc, legacy)) {
+            doc.deleteIn(legacy);
+            pruneEmptyParents(legacy);
+          }
+        };
+        const dropLegacyAlternative = (path: YamlPath, target: YamlPath) => {
+          const legacy = legacyAlternative(path, target);
+          if (legacy && docHas(doc, legacy)) {
+            doc.deleteIn(legacy);
+            pruneEmptyParents(legacy);
+          }
+        };
+        const ensureCompatMap = (path: YamlPath) => {
+          const target = mappedPath(path);
+          ensureParents(target);
+          ensureMapInDoc(doc, target);
+        };
+        const deleteCompatIfMapEmpty = (path: YamlPath) => {
+          const target = mappedPath(path);
+          deleteIfMapEmpty(doc, target);
+          pruneEmptyParents(target);
+          const legacy = legacyAlternative(path, target);
+          if (legacy) {
+            deleteIfMapEmpty(doc, legacy);
+            pruneEmptyParents(legacy);
+          }
+        };
+        const setCompatValue = (path: YamlPath, value: unknown) => {
+          const target = mappedPath(path);
+          ensureParents(target);
+          doc.setIn(target, value);
+          dropLegacyAlternative(path, target);
+        };
+        const setCompatBoolean = (path: YamlPath, value: boolean) => {
+          const target = mappedPath(path);
+          if (useV8Layout && !pathsEqual(target, path)) {
+            ensureParents(target);
+            doc.setIn(target, value);
+            dropLegacyAlternative(path, target);
+            return;
+          }
+          setBooleanInDoc(doc, target, value);
+        };
+        const setCompatString = (path: YamlPath, value: unknown) => {
+          const target = mappedPath(path);
+          if (useV8Layout && !pathsEqual(target, path)) {
+            const safe = typeof value === 'string' ? value : '';
+            if (safe.trim() !== '' || hasCompat(path)) {
+              ensureParents(target);
+              doc.setIn(target, safe);
+            }
+            dropLegacyAlternative(path, target);
+            return;
+          }
+          setStringInDoc(doc, target, value);
+        };
+        const setCompatInt = (path: YamlPath, value: unknown) => {
+          const target = mappedPath(path);
+          if (useV8Layout && !pathsEqual(target, path)) {
+            const safe = typeof value === 'string' ? value : '';
+            const trimmed = safe.trim();
+            if (trimmed === '') {
+              deleteCompat(path);
+              return;
+            }
+            if (!/^-?\d+$/.test(trimmed)) return;
+            const parsed = Number(trimmed);
+            if (!Number.isFinite(parsed)) return;
+            ensureParents(target);
+            doc.setIn(target, parsed);
+            dropLegacyAlternative(path, target);
+            return;
+          }
+          setIntFromStringInDoc(doc, target, value);
+        };
+        const setCompatDisableImageGeneration = (
+          path: YamlPath,
+          value: DisableImageGenerationMode
+        ) => {
+          const target = mappedPath(path);
+          if (useV8Layout && !pathsEqual(target, path)) {
+            ensureParents(target);
+            doc.setIn(
+              target,
+              value === 'chat' || value === 'passthrough'
+                ? value
+                : value === 'true'
+                  ? true
+                  : false
+            );
+            dropLegacyAlternative(path, target);
+            return;
+          }
+          setDisableImageGenerationInDoc(doc, target, value);
+        };
 
-        if (isDirty('host')) setStringInDoc(doc, ['host'], values.host);
-        if (isDirty('port')) setIntFromStringInDoc(doc, ['port'], values.port);
+        if (isDirty('host')) setCompatString(['host'], values.host);
+        if (isDirty('port')) setCompatInt(['port'], values.port);
 
         const tlsDirty = isDirty('tlsEnable') || isDirty('tlsCert') || isDirty('tlsKey');
         if (tlsDirty) {
-          ensureMapInDoc(doc, ['tls']);
-          if (isDirty('tlsEnable')) setBooleanInDoc(doc, ['tls', 'enable'], values.tlsEnable);
-          if (isDirty('tlsCert')) setStringInDoc(doc, ['tls', 'cert'], values.tlsCert);
-          if (isDirty('tlsKey')) setStringInDoc(doc, ['tls', 'key'], values.tlsKey);
-          deleteIfMapEmpty(doc, ['tls']);
+          ensureCompatMap(['tls']);
+          if (isDirty('tlsEnable')) setCompatBoolean(['tls', 'enable'], values.tlsEnable);
+          if (isDirty('tlsCert')) setCompatString(['tls', 'cert'], values.tlsCert);
+          if (isDirty('tlsKey')) setCompatString(['tls', 'key'], values.tlsKey);
+          deleteCompatIfMapEmpty(['tls']);
         }
 
         const hasRemoteManagementSecretKeyUpdate =
@@ -961,18 +1271,18 @@ export function useVisualConfig() {
           isDirty('rmDisableAutoUpdatePanel') ||
           isDirty('rmPanelRepo');
         if (remoteManagementDirty) {
-          ensureMapInDoc(doc, ['remote-management']);
+          ensureCompatMap(['remote-management']);
           if (isDirty('rmAllowRemote')) {
-            setBooleanInDoc(doc, ['remote-management', 'allow-remote'], values.rmAllowRemote);
+            setCompatBoolean(['remote-management', 'allow-remote'], values.rmAllowRemote);
           }
           if (
             hasRemoteManagementSecretKeyUpdate &&
             values.rmSecretKeyAction === 'replace' &&
             values.rmSecretKey.length > 0
           ) {
-            doc.setIn(['remote-management', 'secret-key'], values.rmSecretKey);
+            setCompatValue(['remote-management', 'secret-key'], values.rmSecretKey);
           } else if (hasRemoteManagementSecretKeyUpdate && values.rmSecretKeyAction === 'clear') {
-            doc.setIn(['remote-management', 'secret-key'], '');
+            setCompatValue(['remote-management', 'secret-key'], '');
           }
           if (isDirty('rmDisableControlPanel')) {
             setBooleanInDoc(
@@ -994,14 +1304,14 @@ export function useVisualConfig() {
               ['remote-management', 'panel-github-repository'],
               values.rmPanelRepo
             );
-            if (docHas(doc, ['remote-management', 'panel-repo'])) {
-              doc.deleteIn(['remote-management', 'panel-repo']);
+            if (hasCompat(['remote-management', 'panel-repo'])) {
+              deleteCompat(['remote-management', 'panel-repo']);
             }
           }
-          deleteIfMapEmpty(doc, ['remote-management']);
+          deleteCompatIfMapEmpty(['remote-management']);
         }
 
-        if (isDirty('authDir')) setStringInDoc(doc, ['auth-dir'], values.authDir);
+        if (isDirty('authDir')) setCompatString(['auth-dir'], values.authDir);
         if (isDirty('apiKeysText')) {
           const apiKeys = values.apiKeysText
             .split('\n')
@@ -1009,47 +1319,47 @@ export function useVisualConfig() {
             .filter(Boolean);
           // In v8 the root mapping holds upstream credentials, not client keys.
           const hasUpstreamKeyGroups = isMap(doc.getIn(['api-keys'], true));
-          if (docHas(doc, ['access', 'api-keys']) || hasUpstreamKeyGroups) {
-            ensureMapInDoc(doc, ['access']);
+          if (hasCompat(['access', 'api-keys']) || hasUpstreamKeyGroups) {
+            ensureCompatMap(['access']);
             // Keep an explicit empty list authoritative over any legacy keys.
-            doc.setIn(['access', 'api-keys'], apiKeys);
-            if (!hasUpstreamKeyGroups) doc.deleteIn(['api-keys']);
+            setCompatValue(['access', 'api-keys'], apiKeys);
+            if (!hasUpstreamKeyGroups) deleteCompat(['api-keys']);
           } else if (apiKeys.length > 0) {
-            doc.setIn(['api-keys'], apiKeys);
-          } else if (docHas(doc, ['api-keys'])) {
-            doc.deleteIn(['api-keys']);
+            setCompatValue(['api-keys'], apiKeys);
+          } else if (hasCompat(['api-keys'])) {
+            deleteCompat(['api-keys']);
           }
           deleteLegacyApiKeysProvider(doc);
         }
 
-        if (isDirty('debug')) setBooleanInDoc(doc, ['debug'], values.debug);
+        if (isDirty('debug')) setCompatBoolean(['debug'], values.debug);
 
         const shouldWritePprofEnable = isDirty('pprofEnable');
         const shouldWritePprofAddr = isDirty('pprofAddr');
         if (shouldWritePprofEnable || shouldWritePprofAddr) {
-          ensureMapInDoc(doc, ['pprof']);
-          if (shouldWritePprofEnable) doc.setIn(['pprof', 'enable'], values.pprofEnable);
-          if (shouldWritePprofAddr) setStringInDoc(doc, ['pprof', 'addr'], values.pprofAddr);
-          deleteIfMapEmpty(doc, ['pprof']);
+          ensureCompatMap(['pprof']);
+          if (shouldWritePprofEnable) setCompatValue(['pprof', 'enable'], values.pprofEnable);
+          if (shouldWritePprofAddr) setCompatString(['pprof', 'addr'], values.pprofAddr);
+          deleteCompatIfMapEmpty(['pprof']);
         }
 
         if (isDirty('commercialMode')) {
-          setBooleanInDoc(doc, ['commercial-mode'], values.commercialMode);
+          setCompatBoolean(['commercial-mode'], values.commercialMode);
         }
         if (isDirty('usageStatisticsEnabled')) {
-          setBooleanInDoc(doc, ['usage-statistics-enabled'], values.usageStatisticsEnabled);
+          setCompatBoolean(['usage-statistics-enabled'], values.usageStatisticsEnabled);
         }
         if (isDirty('loggingToFile')) {
-          setBooleanInDoc(doc, ['logging-to-file'], values.loggingToFile);
+          setCompatBoolean(['logging-to-file'], values.loggingToFile);
         }
         if (isDirty('requestLog')) {
-          setBooleanInDoc(doc, ['request-log'], values.requestLog);
+          setCompatBoolean(['request-log'], values.requestLog);
         }
         if (isDirty('logsMaxTotalSizeMb')) {
-          setIntFromStringInDoc(doc, ['logs-max-total-size-mb'], values.logsMaxTotalSizeMb);
+          setCompatInt(['logs-max-total-size-mb'], values.logsMaxTotalSizeMb);
         }
         if (isDirty('errorLogsMaxFiles')) {
-          setIntFromStringInDoc(doc, ['error-logs-max-files'], values.errorLogsMaxFiles);
+          setCompatInt(['error-logs-max-files'], values.errorLogsMaxFiles);
         }
         if (isDirty('redisUsageQueueRetentionSeconds')) {
           setIntFromStringInDoc(
@@ -1073,52 +1383,52 @@ export function useVisualConfig() {
           shouldWritePluginStoreSources ||
           shouldWritePluginStoreAuth
         ) {
-          ensureMapInDoc(doc, ['plugins']);
+          ensureCompatMap(['plugins']);
           if (shouldWritePluginsEnabled) {
-            doc.setIn(['plugins', 'enabled'], values.pluginsEnabled);
+            setCompatValue(['plugins', 'enabled'], values.pluginsEnabled);
           }
           if (shouldWritePluginsDir) {
             if (values.pluginsDir.trim()) {
-              doc.setIn(['plugins', 'dir'], values.pluginsDir);
-            } else if (docHas(doc, ['plugins', 'dir'])) {
-              doc.deleteIn(['plugins', 'dir']);
+              setCompatValue(['plugins', 'dir'], values.pluginsDir);
+            } else if (hasCompat(['plugins', 'dir'])) {
+              deleteCompat(['plugins', 'dir']);
             }
           }
           if (shouldWritePluginStoreSources) {
             if (pluginStoreSources.length > 0) {
-              doc.setIn(['plugins', 'store-sources'], pluginStoreSources);
-            } else if (docHas(doc, ['plugins', 'store-sources'])) {
-              doc.deleteIn(['plugins', 'store-sources']);
+              setCompatValue(['plugins', 'store-sources'], pluginStoreSources);
+            } else if (hasCompat(['plugins', 'store-sources'])) {
+              deleteCompat(['plugins', 'store-sources']);
             }
           }
           if (shouldWritePluginStoreAuth) {
             const storeAuth = serializePluginStoreAuthForYaml(values.pluginStoreAuth);
             if (storeAuth.length > 0) {
-              doc.setIn(['plugins', 'store-auth'], storeAuth);
-            } else if (docHas(doc, ['plugins', 'store-auth'])) {
-              doc.deleteIn(['plugins', 'store-auth']);
+              setCompatValue(['plugins', 'store-auth'], storeAuth);
+            } else if (hasCompat(['plugins', 'store-auth'])) {
+              deleteCompat(['plugins', 'store-auth']);
             }
           }
-          deleteIfMapEmpty(doc, ['plugins']);
+          deleteCompatIfMapEmpty(['plugins']);
         }
 
-        if (isDirty('proxyUrl')) setStringInDoc(doc, ['proxy-url'], values.proxyUrl);
+        if (isDirty('proxyUrl')) setCompatString(['proxy-url'], values.proxyUrl);
         if (isDirty('forceModelPrefix')) {
-          setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);
+          setCompatBoolean(['force-model-prefix'], values.forceModelPrefix);
         }
         if (isDirty('passthroughHeaders')) {
-          setBooleanInDoc(doc, ['passthrough-headers'], values.passthroughHeaders);
+          setCompatBoolean(['passthrough-headers'], values.passthroughHeaders);
         }
-        if (isDirty('requestRetry')) setIntFromStringInDoc(doc, ['request-retry'], values.requestRetry);
+        if (isDirty('requestRetry')) setCompatInt(['request-retry'], values.requestRetry);
         if (isDirty('maxRetryCredentials')) {
-          setIntFromStringInDoc(doc, ['max-retry-credentials'], values.maxRetryCredentials);
+          setCompatInt(['max-retry-credentials'], values.maxRetryCredentials);
         }
         if (isDirty('maxRetryInterval')) {
-          setIntFromStringInDoc(doc, ['max-retry-interval'], values.maxRetryInterval);
+          setCompatInt(['max-retry-interval'], values.maxRetryInterval);
         }
-        if (isDirty('disableCooling')) setBooleanInDoc(doc, ['disable-cooling'], values.disableCooling);
+        if (isDirty('disableCooling')) setCompatBoolean(['disable-cooling'], values.disableCooling);
         if (isDirty('saveCooldownStatus')) {
-          setBooleanInDoc(doc, ['save-cooldown-status'], values.saveCooldownStatus);
+          setCompatBoolean(['save-cooldown-status'], values.saveCooldownStatus);
         }
         if (isDirty('transientErrorCooldownSeconds')) {
           setIntFromStringInDoc(
@@ -1128,29 +1438,28 @@ export function useVisualConfig() {
           );
         }
         if (isDirty('disableClaudeCloakMode')) {
-          setBooleanInDoc(doc, ['disable-claude-cloak-mode'], values.disableClaudeCloakMode);
+          setCompatBoolean(['disable-claude-cloak-mode'], values.disableClaudeCloakMode);
         }
         if (isDirty('disableImageGeneration')) {
-          setDisableImageGenerationInDoc(
-            doc,
+          setCompatDisableImageGeneration(
             ['disable-image-generation'],
             values.disableImageGeneration
           );
         }
         if (isDirty('gptImage2BaseModel')) {
-          setStringInDoc(doc, ['gpt-image-2-base-model'], values.gptImage2BaseModel);
+          setCompatString(['gpt-image-2-base-model'], values.gptImage2BaseModel);
         }
         if (isDirty('videoResultAuthCacheTtl')) {
-          setStringInDoc(doc, ['video-result-auth-cache-ttl'], values.videoResultAuthCacheTtl);
+          setCompatString(['video-result-auth-cache-ttl'], values.videoResultAuthCacheTtl);
         }
         if (isDirty('authAutoRefreshWorkers')) {
-          setIntFromStringInDoc(doc, ['auth-auto-refresh-workers'], values.authAutoRefreshWorkers);
+          setCompatInt(['auth-auto-refresh-workers'], values.authAutoRefreshWorkers);
         }
         if (isDirty('wsAuth')) {
-          doc.setIn(['ws-auth'], values.wsAuth);
+          setCompatValue(['ws-auth'], values.wsAuth);
         }
         if (isDirty('antigravitySignatureCacheEnabled')) {
-          doc.setIn(
+          setCompatValue(
             ['antigravity-signature-cache-enabled'],
             values.antigravitySignatureCacheEnabled
           );
@@ -1172,7 +1481,7 @@ export function useVisualConfig() {
           isDirty('claudeHeaderTimeout') ||
           isDirty('claudeHeaderStabilizeDeviceProfile');
         if (claudeHeadersDirty) {
-          ensureMapInDoc(doc, ['claude-header-defaults']);
+          ensureCompatMap(['claude-header-defaults']);
           if (isDirty('claudeHeaderUserAgent')) {
             setStringInDoc(
               doc,
@@ -1195,13 +1504,13 @@ export function useVisualConfig() {
             );
           }
           if (isDirty('claudeHeaderOs')) {
-            setStringInDoc(doc, ['claude-header-defaults', 'os'], values.claudeHeaderOs);
+            setCompatString(['claude-header-defaults', 'os'], values.claudeHeaderOs);
           }
           if (isDirty('claudeHeaderArch')) {
-            setStringInDoc(doc, ['claude-header-defaults', 'arch'], values.claudeHeaderArch);
+            setCompatString(['claude-header-defaults', 'arch'], values.claudeHeaderArch);
           }
           if (isDirty('claudeHeaderTimeout')) {
-            setStringInDoc(doc, ['claude-header-defaults', 'timeout'], values.claudeHeaderTimeout);
+            setCompatString(['claude-header-defaults', 'timeout'], values.claudeHeaderTimeout);
           }
           if (isDirty('claudeHeaderStabilizeDeviceProfile')) {
             setBooleanInDoc(
@@ -1210,13 +1519,13 @@ export function useVisualConfig() {
               values.claudeHeaderStabilizeDeviceProfile
             );
           }
-          deleteIfMapEmpty(doc, ['claude-header-defaults']);
+          deleteCompatIfMapEmpty(['claude-header-defaults']);
         }
 
         const codexHeadersDirty =
           isDirty('codexHeaderUserAgent') || isDirty('codexHeaderBetaFeatures');
         if (codexHeadersDirty) {
-          ensureMapInDoc(doc, ['codex-header-defaults']);
+          ensureCompatMap(['codex-header-defaults']);
           if (isDirty('codexHeaderUserAgent')) {
             setStringInDoc(
               doc,
@@ -1231,49 +1540,49 @@ export function useVisualConfig() {
               values.codexHeaderBetaFeatures
             );
           }
-          deleteIfMapEmpty(doc, ['codex-header-defaults']);
+          deleteCompatIfMapEmpty(['codex-header-defaults']);
         }
 
         const codexIdentityConfusePath = ['codex', 'identity-confuse'];
         const codexIdentityConfuseLegacyPath = ['codex', 'identityConfuse'];
         if (isDirty('codexIdentityConfuse')) {
-          ensureMapInDoc(doc, ['codex']);
-          doc.setIn(codexIdentityConfusePath, values.codexIdentityConfuse);
-          if (docHas(doc, codexIdentityConfuseLegacyPath)) {
-            doc.deleteIn(codexIdentityConfuseLegacyPath);
+          ensureCompatMap(['codex']);
+          setCompatValue(codexIdentityConfusePath, values.codexIdentityConfuse);
+          if (hasCompat(codexIdentityConfuseLegacyPath)) {
+            deleteCompat(codexIdentityConfuseLegacyPath);
           }
-          deleteIfMapEmpty(doc, ['codex']);
+          deleteCompatIfMapEmpty(['codex']);
         }
 
         if (isDirty('devinSensitiveWords')) {
           const devinSensitiveWords = serializeStringListForYaml(values.devinSensitiveWords);
           if (devinSensitiveWords.length > 0) {
-            ensureMapInDoc(doc, ['devin']);
-            doc.setIn(['devin', 'sensitive-words'], devinSensitiveWords);
-          } else if (docHas(doc, ['devin', 'sensitive-words'])) {
-            doc.deleteIn(['devin', 'sensitive-words']);
+            ensureCompatMap(['devin']);
+            setCompatValue(['devin', 'sensitive-words'], devinSensitiveWords);
+          } else if (hasCompat(['devin', 'sensitive-words'])) {
+            deleteCompat(['devin', 'sensitive-words']);
           }
-          deleteIfMapEmpty(doc, ['devin']);
+          deleteCompatIfMapEmpty(['devin']);
         }
 
         const writeQuotaSwitchProject = isDirty('quotaSwitchProject');
         const writeQuotaSwitchPreviewModel = isDirty('quotaSwitchPreviewModel');
         const writeQuotaAntigravityCredits = isDirty('quotaAntigravityCredits');
         if (writeQuotaSwitchProject || writeQuotaSwitchPreviewModel || writeQuotaAntigravityCredits) {
-          ensureMapInDoc(doc, ['quota-exceeded']);
+          ensureCompatMap(['quota-exceeded']);
           if (writeQuotaSwitchProject) {
-            doc.setIn(['quota-exceeded', 'switch-project'], values.quotaSwitchProject);
+            setCompatValue(['quota-exceeded', 'switch-project'], values.quotaSwitchProject);
           }
           if (writeQuotaSwitchPreviewModel) {
-            doc.setIn(
+            setCompatValue(
               ['quota-exceeded', 'switch-preview-model'],
               values.quotaSwitchPreviewModel
             );
           }
           if (writeQuotaAntigravityCredits) {
-            doc.setIn(['quota-exceeded', 'antigravity-credits'], values.quotaAntigravityCredits);
+            setCompatValue(['quota-exceeded', 'antigravity-credits'], values.quotaAntigravityCredits);
           }
-          deleteIfMapEmpty(doc, ['quota-exceeded']);
+          deleteCompatIfMapEmpty(['quota-exceeded']);
         }
 
         const routingDirty =
@@ -1281,12 +1590,12 @@ export function useVisualConfig() {
           isDirty('routingSessionAffinity') ||
           isDirty('routingSessionAffinityTTL');
         if (routingDirty) {
-          ensureMapInDoc(doc, ['routing']);
+          ensureCompatMap(['routing']);
           if (isDirty('routingStrategy')) {
-            doc.setIn(['routing', 'strategy'], values.routingStrategy);
+            setCompatValue(['routing', 'strategy'], values.routingStrategy);
           }
           if (isDirty('routingSessionAffinity')) {
-            setBooleanInDoc(doc, ['routing', 'session-affinity'], values.routingSessionAffinity);
+            setCompatBoolean(['routing', 'session-affinity'], values.routingSessionAffinity);
           }
           if (isDirty('routingSessionAffinityTTL')) {
             setStringInDoc(
@@ -1295,7 +1604,7 @@ export function useVisualConfig() {
               values.routingSessionAffinityTTL
             );
           }
-          deleteIfMapEmpty(doc, ['routing']);
+          deleteCompatIfMapEmpty(['routing']);
         }
 
         const keepaliveSeconds =
@@ -1314,18 +1623,18 @@ export function useVisualConfig() {
         const streamingDirty =
           isDirty('streaming.keepaliveSeconds') || isDirty('streaming.bootstrapRetries');
         if (streamingDirty) {
-          ensureMapInDoc(doc, ['streaming']);
+          ensureCompatMap(['streaming']);
           if (isDirty('streaming.keepaliveSeconds')) {
-            setIntFromStringInDoc(doc, ['streaming', 'keepalive-seconds'], keepaliveSeconds);
+            setCompatInt(['streaming', 'keepalive-seconds'], keepaliveSeconds);
           }
           if (isDirty('streaming.bootstrapRetries')) {
-            setIntFromStringInDoc(doc, ['streaming', 'bootstrap-retries'], bootstrapRetries);
+            setCompatInt(['streaming', 'bootstrap-retries'], bootstrapRetries);
           }
-          deleteIfMapEmpty(doc, ['streaming']);
+          deleteCompatIfMapEmpty(['streaming']);
         }
 
         if (isDirty('streaming.nonstreamKeepaliveInterval')) {
-          setIntFromStringInDoc(doc, ['nonstream-keepalive-interval'], nonstreamKeepaliveInterval);
+          setCompatInt(['nonstream-keepalive-interval'], nonstreamKeepaliveInterval);
         }
 
         const payloadDirty =
@@ -1335,58 +1644,58 @@ export function useVisualConfig() {
           isDirty('payloadOverrideRawRules') ||
           isDirty('payloadFilterRules');
         if (payloadDirty) {
-          ensureMapInDoc(doc, ['payload']);
+          ensureCompatMap(['payload']);
           if (isDirty('payloadDefaultRules')) {
             if (values.payloadDefaultRules.length > 0) {
-              doc.setIn(
+              setCompatValue(
                 ['payload', 'default'],
                 serializePayloadRulesForYaml(values.payloadDefaultRules)
               );
-            } else if (docHas(doc, ['payload', 'default'])) {
-              doc.deleteIn(['payload', 'default']);
+            } else if (hasCompat(['payload', 'default'])) {
+              deleteCompat(['payload', 'default']);
             }
           }
           if (isDirty('payloadDefaultRawRules')) {
             if (values.payloadDefaultRawRules.length > 0) {
-              doc.setIn(
+              setCompatValue(
                 ['payload', 'default-raw'],
                 serializeRawPayloadRulesForYaml(values.payloadDefaultRawRules)
               );
-            } else if (docHas(doc, ['payload', 'default-raw'])) {
-              doc.deleteIn(['payload', 'default-raw']);
+            } else if (hasCompat(['payload', 'default-raw'])) {
+              deleteCompat(['payload', 'default-raw']);
             }
           }
           if (isDirty('payloadOverrideRules')) {
             if (values.payloadOverrideRules.length > 0) {
-              doc.setIn(
+              setCompatValue(
                 ['payload', 'override'],
                 serializePayloadRulesForYaml(values.payloadOverrideRules)
               );
-            } else if (docHas(doc, ['payload', 'override'])) {
-              doc.deleteIn(['payload', 'override']);
+            } else if (hasCompat(['payload', 'override'])) {
+              deleteCompat(['payload', 'override']);
             }
           }
           if (isDirty('payloadOverrideRawRules')) {
             if (values.payloadOverrideRawRules.length > 0) {
-              doc.setIn(
+              setCompatValue(
                 ['payload', 'override-raw'],
                 serializeRawPayloadRulesForYaml(values.payloadOverrideRawRules)
               );
-            } else if (docHas(doc, ['payload', 'override-raw'])) {
-              doc.deleteIn(['payload', 'override-raw']);
+            } else if (hasCompat(['payload', 'override-raw'])) {
+              deleteCompat(['payload', 'override-raw']);
             }
           }
           if (isDirty('payloadFilterRules')) {
             if (values.payloadFilterRules.length > 0) {
-              doc.setIn(
+              setCompatValue(
                 ['payload', 'filter'],
                 serializePayloadFilterRulesForYaml(values.payloadFilterRules)
               );
-            } else if (docHas(doc, ['payload', 'filter'])) {
-              doc.deleteIn(['payload', 'filter']);
+            } else if (hasCompat(['payload', 'filter'])) {
+              deleteCompat(['payload', 'filter']);
             }
           }
-          deleteIfMapEmpty(doc, ['payload']);
+          deleteCompatIfMapEmpty(['payload']);
         }
 
         return doc.toString({ indent: 2, lineWidth: 120, minContentWidth: 0 });
