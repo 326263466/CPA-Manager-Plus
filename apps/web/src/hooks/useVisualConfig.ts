@@ -1285,22 +1285,19 @@ export function useVisualConfig() {
             setCompatValue(['remote-management', 'secret-key'], '');
           }
           if (isDirty('rmDisableControlPanel')) {
-            setBooleanInDoc(
-              doc,
+            setCompatBoolean(
               ['remote-management', 'disable-control-panel'],
               values.rmDisableControlPanel
             );
           }
           if (isDirty('rmDisableAutoUpdatePanel')) {
-            setBooleanInDoc(
-              doc,
+            setCompatBoolean(
               ['remote-management', 'disable-auto-update-panel'],
               values.rmDisableAutoUpdatePanel
             );
           }
           if (isDirty('rmPanelRepo')) {
-            setStringInDoc(
-              doc,
+            setCompatString(
               ['remote-management', 'panel-github-repository'],
               values.rmPanelRepo
             );
@@ -1362,8 +1359,7 @@ export function useVisualConfig() {
           setCompatInt(['error-logs-max-files'], values.errorLogsMaxFiles);
         }
         if (isDirty('redisUsageQueueRetentionSeconds')) {
-          setIntFromStringInDoc(
-            doc,
+          setCompatInt(
             ['redis-usage-queue-retention-seconds'],
             values.redisUsageQueueRetentionSeconds
           );
@@ -1431,8 +1427,7 @@ export function useVisualConfig() {
           setCompatBoolean(['save-cooldown-status'], values.saveCooldownStatus);
         }
         if (isDirty('transientErrorCooldownSeconds')) {
-          setIntFromStringInDoc(
-            doc,
+          setCompatInt(
             ['transient-error-cooldown-seconds'],
             values.transientErrorCooldownSeconds
           );
@@ -1465,8 +1460,7 @@ export function useVisualConfig() {
           );
         }
         if (isDirty('antigravitySignatureBypassStrict')) {
-          setBooleanInDoc(
-            doc,
+          setCompatBoolean(
             ['antigravity-signature-bypass-strict'],
             values.antigravitySignatureBypassStrict
           );
@@ -1483,22 +1477,19 @@ export function useVisualConfig() {
         if (claudeHeadersDirty) {
           ensureCompatMap(['claude-header-defaults']);
           if (isDirty('claudeHeaderUserAgent')) {
-            setStringInDoc(
-              doc,
+            setCompatString(
               ['claude-header-defaults', 'user-agent'],
               values.claudeHeaderUserAgent
             );
           }
           if (isDirty('claudeHeaderPackageVersion')) {
-            setStringInDoc(
-              doc,
+            setCompatString(
               ['claude-header-defaults', 'package-version'],
               values.claudeHeaderPackageVersion
             );
           }
           if (isDirty('claudeHeaderRuntimeVersion')) {
-            setStringInDoc(
-              doc,
+            setCompatString(
               ['claude-header-defaults', 'runtime-version'],
               values.claudeHeaderRuntimeVersion
             );
@@ -1513,8 +1504,7 @@ export function useVisualConfig() {
             setCompatString(['claude-header-defaults', 'timeout'], values.claudeHeaderTimeout);
           }
           if (isDirty('claudeHeaderStabilizeDeviceProfile')) {
-            setBooleanInDoc(
-              doc,
+            setCompatBoolean(
               ['claude-header-defaults', 'stabilize-device-profile'],
               values.claudeHeaderStabilizeDeviceProfile
             );
@@ -1527,15 +1517,13 @@ export function useVisualConfig() {
         if (codexHeadersDirty) {
           ensureCompatMap(['codex-header-defaults']);
           if (isDirty('codexHeaderUserAgent')) {
-            setStringInDoc(
-              doc,
+            setCompatString(
               ['codex-header-defaults', 'user-agent'],
               values.codexHeaderUserAgent
             );
           }
           if (isDirty('codexHeaderBetaFeatures')) {
-            setStringInDoc(
-              doc,
+            setCompatString(
               ['codex-header-defaults', 'beta-features'],
               values.codexHeaderBetaFeatures
             );
@@ -1598,8 +1586,7 @@ export function useVisualConfig() {
             setCompatBoolean(['routing', 'session-affinity'], values.routingSessionAffinity);
           }
           if (isDirty('routingSessionAffinityTTL')) {
-            setStringInDoc(
-              doc,
+            setCompatString(
               ['routing', 'session-affinity-ttl'],
               values.routingSessionAffinityTTL
             );
