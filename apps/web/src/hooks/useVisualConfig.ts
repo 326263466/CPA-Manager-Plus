@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useReducer } from 'react';
-import { isMap, parse as parseYaml, parseDocument } from 'yaml';
+import { isAlias, isMap, isScalar, parse as parseYaml, parseDocument } from 'yaml';
 import type {
   DisableImageGenerationMode,
   PluginStoreAuthApplyTo,
@@ -162,6 +162,8 @@ function resolveApiKeysText(parsed: Record<string, unknown>): string {
 type YamlDocument = ReturnType<typeof parseDocument>;
 type YamlPath = string[];
 
+const YAML_EFFECTIVE_PARSE_OPTIONS = { merge: true } as const;
+
 type VisualConfigPathMapping = {
   legacy: YamlPath;
   canonical: YamlPath;
@@ -299,6 +301,33 @@ function readObjectPath(
     current = record[part];
   }
   return { found: true, value: current };
+}
+
+function yamlMapHasMergeKey(value: unknown): boolean {
+  if (!isMap(value)) return false;
+  return value.items.some((pair) => {
+    const key = pair.key;
+    return key === '<<' || (isScalar(key) && key.value === '<<');
+  });
+}
+
+function materializeEffectiveMapAtPath(
+  doc: YamlDocument,
+  path: YamlPath,
+  effectiveRoot: Record<string, unknown>
+): void {
+  const current = doc.getIn(path, true);
+  const effective = readObjectPath(effectiveRoot, path);
+  const effectiveMap = asRecord(effective.value);
+  if (!effective.found || !effectiveMap) return;
+
+  const inheritedOnly = current === undefined;
+  if (!inheritedOnly && !isAlias(current) && !yamlMapHasMergeKey(current)) return;
+
+  // Detach only the edited branch from aliases/merge inheritance. The anchor source
+  // and any other aliases remain untouched; the local branch receives the effective
+  // mapping so inherited siblings are preserved before a dirty leaf is changed.
+  doc.setIn(path, doc.createNode(effectiveMap));
 }
 
 function getHistoricalV8Aliases(path: YamlPath): YamlPath[] {
@@ -992,12 +1021,12 @@ export function useVisualConfig() {
 
   const loadVisualValuesFromYaml = useCallback((yamlContent: string) => {
     try {
-      const document = parseDocument(yamlContent);
+      const document = parseDocument(yamlContent, YAML_EFFECTIVE_PARSE_OPTIONS);
       if (document.errors.length > 0) {
         throw new Error(document.errors[0]?.message ?? 'Invalid YAML');
       }
 
-      const parsedRaw: unknown = parseYaml(yamlContent) || {};
+      const parsedRaw: unknown = parseYaml(yamlContent, YAML_EFFECTIVE_PARSE_OPTIONS) || {};
       const parsed = asRecord(parsedRaw) ?? {};
       const readCompat = (path: YamlPath, aliases: YamlPath[] = []) =>
         readVisualConfigValue(parsed, path, aliases);
@@ -1193,14 +1222,15 @@ export function useVisualConfig() {
   const applyVisualChangesToYaml = useCallback(
     (currentYaml: string): string => {
       try {
-        const doc = parseDocument(currentYaml);
+        const doc = parseDocument(currentYaml, YAML_EFFECTIVE_PARSE_OPTIONS);
         if (doc.errors.length > 0) return currentYaml;
         if (!isMap(doc.contents)) {
           doc.contents = doc.createNode({}) as unknown as typeof doc.contents;
         }
         const values = visualValues;
         const isDirty = (key: string) => dirtyFields.has(key);
-        const parsedCurrent = asRecord(parseYaml(currentYaml)) ?? {};
+        const parsedCurrent =
+          asRecord(parseYaml(currentYaml, YAML_EFFECTIVE_PARSE_OPTIONS)) ?? {};
         const useV8Layout = isV8VisualConfigLayout(parsedCurrent);
         const mappedPath = (path: YamlPath) =>
           useV8Layout ? mapVisualConfigV8Path(path) : path;
@@ -1209,58 +1239,79 @@ export function useVisualConfig() {
             deleteIfMapEmpty(doc, path.slice(0, length));
           }
         };
+        const materializeParents = (path: YamlPath) => {
+          for (let length = 1; length < path.length; length += 1) {
+            materializeEffectiveMapAtPath(doc, path.slice(0, length), parsedCurrent);
+          }
+        };
         const ensureParents = (path: YamlPath) => {
           for (let length = 1; length < path.length; length += 1) {
-            ensureMapInDoc(doc, path.slice(0, length));
+            const parentPath = path.slice(0, length);
+            materializeEffectiveMapAtPath(doc, parentPath, parsedCurrent);
+            ensureMapInDoc(doc, parentPath);
           }
         };
         const legacyAlternative = (path: YamlPath, target: YamlPath) =>
           useV8Layout && !pathsEqual(path, target) ? path : null;
         const historicalAlternatives = (path: YamlPath, target: YamlPath) =>
           useV8Layout && !pathsEqual(path, target) ? getHistoricalV8Aliases(path) : [];
+        const effectiveHas = (path: YamlPath) => readObjectPath(parsedCurrent, path).found;
         const hasCompat = (path: YamlPath) => {
           const target = mappedPath(path);
           const legacy = legacyAlternative(path, target);
           return (
             docHas(doc, target) ||
-            historicalAlternatives(path, target).some((alias) => docHas(doc, alias)) ||
-            Boolean(legacy && docHas(doc, legacy))
+            effectiveHas(target) ||
+            historicalAlternatives(path, target).some(
+              (alias) => docHas(doc, alias) || effectiveHas(alias)
+            ) ||
+            Boolean(legacy && (docHas(doc, legacy) || effectiveHas(legacy)))
           );
         };
         const deleteCompat = (path: YamlPath) => {
           const target = mappedPath(path);
           const legacy = legacyAlternative(path, target);
+          materializeParents(target);
           if (docHas(doc, target)) {
             doc.deleteIn(target);
             pruneEmptyParents(target);
           }
           for (const alias of historicalAlternatives(path, target)) {
+            materializeParents(alias);
             if (docHas(doc, alias)) {
               doc.deleteIn(alias);
               pruneEmptyParents(alias);
             }
           }
-          if (legacy && docHas(doc, legacy)) {
-            doc.deleteIn(legacy);
-            pruneEmptyParents(legacy);
+          if (legacy) {
+            materializeParents(legacy);
+            if (docHas(doc, legacy)) {
+              doc.deleteIn(legacy);
+              pruneEmptyParents(legacy);
+            }
           }
         };
         const dropCompatibilityAlternatives = (path: YamlPath, target: YamlPath) => {
           for (const alias of historicalAlternatives(path, target)) {
+            materializeParents(alias);
             if (docHas(doc, alias)) {
               doc.deleteIn(alias);
               pruneEmptyParents(alias);
             }
           }
           const legacy = legacyAlternative(path, target);
-          if (legacy && docHas(doc, legacy)) {
-            doc.deleteIn(legacy);
-            pruneEmptyParents(legacy);
+          if (legacy) {
+            materializeParents(legacy);
+            if (docHas(doc, legacy)) {
+              doc.deleteIn(legacy);
+              pruneEmptyParents(legacy);
+            }
           }
         };
         const ensureCompatMap = (path: YamlPath) => {
           const target = mappedPath(path);
           ensureParents(target);
+          materializeEffectiveMapAtPath(doc, target, parsedCurrent);
           ensureMapInDoc(doc, target);
         };
         const deleteCompatIfMapEmpty = (path: YamlPath) => {
