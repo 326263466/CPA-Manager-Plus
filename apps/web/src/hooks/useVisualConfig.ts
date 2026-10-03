@@ -209,7 +209,6 @@ const VISUAL_CONFIG_V8_PATH_MAPPINGS: VisualConfigPathMapping[] = [
     legacy: ['codex-header-defaults'],
     canonical: ['oauth', 'providers', 'codex', 'header-defaults'],
   },
-  { legacy: ['codex'], canonical: ['oauth', 'providers', 'codex'] },
   {
     legacy: ['disable-claude-cloak-mode'],
     canonical: ['upstream', 'claude', 'disable-claude-cloak-mode'],
@@ -311,23 +310,50 @@ function yamlMapHasMergeKey(value: unknown): boolean {
   });
 }
 
+function yamlPathKey(path: YamlPath): string {
+  return path.join('\u0000');
+}
+
 function materializeEffectiveMapAtPath(
   doc: YamlDocument,
+  sourceDoc: YamlDocument,
   path: YamlPath,
-  effectiveRoot: Record<string, unknown>
+  effectiveRoot: Record<string, unknown>,
+  materializedPaths: Set<string>
 ): void {
-  const current = doc.getIn(path, true);
+  const key = yamlPathKey(path);
+  if (materializedPaths.has(key)) return;
+
   const effective = readObjectPath(effectiveRoot, path);
   const effectiveMap = asRecord(effective.value);
   if (!effective.found || !effectiveMap) return;
 
-  const inheritedOnly = current === undefined;
-  if (!inheritedOnly && !isAlias(current) && !yamlMapHasMergeKey(current)) return;
+  const original = sourceDoc.getIn(path, true);
+  const originallyInherited =
+    original === undefined || isAlias(original) || yamlMapHasMergeKey(original);
+  if (!originallyInherited) return;
 
-  // Detach only the edited branch from aliases/merge inheritance. The anchor source
-  // and any other aliases remain untouched; the local branch receives the effective
-  // mapping so inherited siblings are preserved before a dirty leaf is changed.
+  // Detach only the edited branch from aliases/merge inheritance. Track the
+  // detachment for this save transaction so a later sibling write cannot
+  // resurrect values that an earlier dirty field already deleted.
   doc.setIn(path, doc.createNode(effectiveMap));
+  materializedPaths.add(key);
+}
+
+function pathUsesYamlInheritance(
+  sourceDoc: YamlDocument,
+  path: YamlPath,
+  effectiveRoot: Record<string, unknown>
+): boolean {
+  if (!readObjectPath(effectiveRoot, path).found) return false;
+  if (!sourceDoc.hasIn(path)) return true;
+
+  for (let length = 0; length < path.length; length += 1) {
+    const node =
+      length === 0 ? sourceDoc.contents : sourceDoc.getIn(path.slice(0, length), true);
+    if (isAlias(node) || yamlMapHasMergeKey(node)) return true;
+  }
+  return false;
 }
 
 function getHistoricalV8Aliases(path: YamlPath): YamlPath[] {
@@ -1028,6 +1054,7 @@ export function useVisualConfig() {
 
       const parsedRaw: unknown = parseYaml(yamlContent, YAML_EFFECTIVE_PARSE_OPTIONS) || {};
       const parsed = asRecord(parsedRaw) ?? {};
+      const v8Layout = isV8VisualConfigLayout(parsed);
       const readCompat = (path: YamlPath, aliases: YamlPath[] = []) =>
         readVisualConfigValue(parsed, path, aliases);
       const quotaExceeded = asRecord(parsed['quota-exceeded']);
@@ -1171,9 +1198,12 @@ export function useVisualConfig() {
           typeof readCompat(['codex-header-defaults', 'beta-features']) === 'string'
             ? (readCompat(['codex-header-defaults', 'beta-features']) as string)
             : '',
-        codexIdentityConfuse: Boolean(
-          readCompat(['codex', 'identity-confuse'], [['codex', 'identityConfuse']])
-        ),
+        codexIdentityConfuse: v8Layout
+          ? false
+          : Boolean(
+              readCompat(['codex', 'identity-confuse'], [['codex', 'identityConfuse']])
+            ),
+        codexIdentityConfuseSupported: !v8Layout,
         devinSensitiveWords: parseStringList(readCompat(['devin', 'sensitive-words'])),
 
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? false),
@@ -1223,7 +1253,8 @@ export function useVisualConfig() {
     (currentYaml: string): string => {
       try {
         const doc = parseDocument(currentYaml, YAML_EFFECTIVE_PARSE_OPTIONS);
-        if (doc.errors.length > 0) return currentYaml;
+        const sourceDoc = parseDocument(currentYaml, YAML_EFFECTIVE_PARSE_OPTIONS);
+        if (doc.errors.length > 0 || sourceDoc.errors.length > 0) return currentYaml;
         if (!isMap(doc.contents)) {
           doc.contents = doc.createNode({}) as unknown as typeof doc.contents;
         }
@@ -1232,6 +1263,7 @@ export function useVisualConfig() {
         const parsedCurrent =
           asRecord(parseYaml(currentYaml, YAML_EFFECTIVE_PARSE_OPTIONS)) ?? {};
         const useV8Layout = isV8VisualConfigLayout(parsedCurrent);
+        const materializedPaths = new Set<string>();
         const mappedPath = (path: YamlPath) =>
           useV8Layout ? mapVisualConfigV8Path(path) : path;
         const pruneEmptyParents = (path: YamlPath) => {
@@ -1241,13 +1273,25 @@ export function useVisualConfig() {
         };
         const materializeParents = (path: YamlPath) => {
           for (let length = 1; length < path.length; length += 1) {
-            materializeEffectiveMapAtPath(doc, path.slice(0, length), parsedCurrent);
+            materializeEffectiveMapAtPath(
+              doc,
+              sourceDoc,
+              path.slice(0, length),
+              parsedCurrent,
+              materializedPaths
+            );
           }
         };
         const ensureParents = (path: YamlPath) => {
           for (let length = 1; length < path.length; length += 1) {
             const parentPath = path.slice(0, length);
-            materializeEffectiveMapAtPath(doc, parentPath, parsedCurrent);
+            materializeEffectiveMapAtPath(
+              doc,
+              sourceDoc,
+              parentPath,
+              parsedCurrent,
+              materializedPaths
+            );
             ensureMapInDoc(doc, parentPath);
           }
         };
@@ -1311,7 +1355,13 @@ export function useVisualConfig() {
         const ensureCompatMap = (path: YamlPath) => {
           const target = mappedPath(path);
           ensureParents(target);
-          materializeEffectiveMapAtPath(doc, target, parsedCurrent);
+          materializeEffectiveMapAtPath(
+            doc,
+            sourceDoc,
+            target,
+            parsedCurrent,
+            materializedPaths
+          );
           ensureMapInDoc(doc, target);
         };
         const deleteCompatIfMapEmpty = (path: YamlPath) => {
@@ -1342,6 +1392,11 @@ export function useVisualConfig() {
             dropCompatibilityAlternatives(path, target);
             return;
           }
+          if (!value && effectiveHas(target)) {
+            ensureParents(target);
+            doc.setIn(target, false);
+            return;
+          }
           setBooleanInDoc(doc, target, value);
         };
         const setCompatString = (path: YamlPath, value: unknown) => {
@@ -1353,6 +1408,12 @@ export function useVisualConfig() {
               doc.setIn(target, safe);
             }
             dropCompatibilityAlternatives(path, target);
+            return;
+          }
+          const safe = typeof value === 'string' ? value : '';
+          if (safe.trim() === '' && effectiveHas(target)) {
+            ensureParents(target);
+            doc.setIn(target, '');
             return;
           }
           setStringInDoc(doc, target, value);
@@ -1374,6 +1435,15 @@ export function useVisualConfig() {
             dropCompatibilityAlternatives(path, target);
             return;
           }
+          const safe = typeof value === 'string' ? value : '';
+          if (
+            safe.trim() === '' &&
+            pathUsesYamlInheritance(sourceDoc, target, parsedCurrent)
+          ) {
+            ensureParents(target);
+            doc.setIn(target, null);
+            return;
+          }
           setIntFromStringInDoc(doc, target, value);
         };
         const setCompatDisableImageGeneration = (
@@ -1392,6 +1462,11 @@ export function useVisualConfig() {
                   : false
             );
             dropCompatibilityAlternatives(path, target);
+            return;
+          }
+          if (value === 'false' && effectiveHas(target)) {
+            ensureParents(target);
+            doc.setIn(target, false);
             return;
           }
           setDisableImageGenerationInDoc(doc, target, value);
@@ -1464,7 +1539,7 @@ export function useVisualConfig() {
             .map((key) => key.trim())
             .filter(Boolean);
           // In v8 the root mapping holds upstream credentials, not client keys.
-          const hasUpstreamKeyGroups = isMap(doc.getIn(['api-keys'], true));
+          const hasUpstreamKeyGroups = asRecord(parsedCurrent['api-keys']) !== null;
           if (hasCompat(['access', 'api-keys']) || hasUpstreamKeyGroups) {
             ensureCompatMap(['access']);
             // Keep an explicit empty list authoritative over any legacy keys.
@@ -1682,7 +1757,7 @@ export function useVisualConfig() {
 
         const codexIdentityConfusePath = ['codex', 'identity-confuse'];
         const codexIdentityConfuseLegacyPath = ['codex', 'identityConfuse'];
-        if (isDirty('codexIdentityConfuse')) {
+        if (isDirty('codexIdentityConfuse') && !useV8Layout) {
           ensureCompatMap(['codex']);
           setCompatValue(codexIdentityConfusePath, values.codexIdentityConfuse);
           if (hasCompat(codexIdentityConfuseLegacyPath)) {
