@@ -2,27 +2,34 @@ import { act, createElement, createRef, useImperativeHandle, type Ref } from 're
 import { create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
-import { useVisualConfig } from './useVisualConfig';
+import { getCodexIdentityConfuseCompatibility, useVisualConfig } from './useVisualConfig';
 
 type UseVisualConfigResult = ReturnType<typeof useVisualConfig>;
+type VisualConfigRuntime = Parameters<typeof useVisualConfig>[0];
 
 type UseVisualConfigHarness = {
   getCurrent: () => UseVisualConfigResult;
   unmount: () => void;
 };
 
-function HookHarness({ hookRef }: { hookRef: Ref<UseVisualConfigResult> }) {
-  const hook = useVisualConfig();
+function HookHarness({
+  hookRef,
+  runtime,
+}: {
+  hookRef: Ref<UseVisualConfigResult>;
+  runtime?: VisualConfigRuntime;
+}) {
+  const hook = useVisualConfig(runtime);
   useImperativeHandle(hookRef, () => hook, [hook]);
   return null;
 }
 
-const mountUseVisualConfig = (): UseVisualConfigHarness => {
+const mountUseVisualConfig = (runtime?: VisualConfigRuntime): UseVisualConfigHarness => {
   const hookRef = createRef<UseVisualConfigResult>();
   let renderer: ReactTestRenderer | null = null;
 
   act(() => {
-    renderer = create(createElement(HookHarness, { hookRef }));
+    renderer = create(createElement(HookHarness, { hookRef, runtime }));
   });
 
   return {
@@ -1267,8 +1274,115 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
-  it('does not expose or write the removed Codex identity-confuse option on v8', () => {
-    const harness = mountUseVisualConfig();
+  it.each([
+    ['v7.3.2', 'supported'],
+    ['v8.0.0', 'supported'],
+    ['v8.0.1', 'supported'],
+    ['v8.0.2', 'supported'],
+    ['v8.0.3', 'supported'],
+    ['v8.0.4', 'unsupported'],
+    ['v8.0.11', 'unsupported'],
+    ['v8.0.3-0-gdeadbee', 'supported'],
+    ['v8.0.3-1-g48686ccc', 'unsupported'],
+    ['dev', 'unverified'],
+  ] as const)(
+    'detects Codex identity-confuse runtime support for %s',
+    (serverVersion, expected) => {
+      expect(getCodexIdentityConfuseCompatibility(serverVersion)).toBe(expected);
+    }
+  );
+
+  it('treats the upstream removal commit as unsupported even without a release version', () => {
+    expect(
+      getCodexIdentityConfuseCompatibility('dev', '48686ccc8fbe898c2d048ac4815a7b2f1e409e27')
+    ).toBe('unsupported');
+  });
+
+  it('keeps identity-confuse on the exact canonical path for early CPA v8 releases', () => {
+    const harness = mountUseVisualConfig({ serverVersion: 'v8.0.3' });
+    const yaml = [
+      'oauth:',
+      '  providers:',
+      '    codex:',
+      '      identity-confuse: false',
+      '      header-defaults:',
+      '        user-agent: codex-test',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.codexIdentityConfuseSupported).toBe(true);
+    expect(harness.getCurrent().visualValues.codexIdentityConfuse).toBe(false);
+
+    act(() => {
+      harness.getCurrent().setVisualValues({ codexIdentityConfuse: true });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      oauth?: { providers?: { codex?: Record<string, unknown> } };
+      codex?: unknown;
+    };
+    expect(parsed.oauth?.providers?.codex?.['identity-confuse']).toBe(true);
+    expect(parsed.codex).toBeUndefined();
+    harness.unmount();
+  });
+
+  it('does not write identity-confuse on CPA v8.0.4+ even when the YAML is legacy layout', () => {
+    const harness = mountUseVisualConfig({ serverVersion: 'v8.0.4' });
+    const yaml = [
+      'host: 127.0.0.1',
+      'codex:',
+      '  identity-confuse: true',
+      '  other-setting: kept',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.codexIdentityConfuseSupported).toBe(false);
+    expect(harness.getCurrent().visualValues.codexIdentityConfuse).toBe(false);
+
+    act(() => {
+      harness.getCurrent().setVisualValues({ codexIdentityConfuse: false });
+    });
+
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    expect(parseYaml(updated)).toEqual(parseYaml(yaml));
+    harness.unmount();
+  });
+
+  it('does not write identity-confuse on CPA v8.0.4+ when stale canonical YAML contains it', () => {
+    const harness = mountUseVisualConfig({ serverVersion: 'v8.0.11' });
+    const yaml = [
+      'oauth:',
+      '  providers:',
+      '    codex:',
+      '      identity-confuse: true',
+      '      header-defaults:',
+      '        user-agent: codex-test',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.codexIdentityConfuseSupported).toBe(false);
+    expect(harness.getCurrent().visualValues.codexIdentityConfuse).toBe(false);
+
+    act(() => {
+      harness.getCurrent().setVisualValues({ codexIdentityConfuse: false });
+    });
+
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    expect(parseYaml(updated)).toEqual(parseYaml(yaml));
+    harness.unmount();
+  });
+
+  it('does not expose or write the removed Codex identity-confuse option on current CPA v8', () => {
+    const harness = mountUseVisualConfig({ serverVersion: 'v8.0.11' });
     const yaml = [
       'oauth:',
       '  providers:',
@@ -1293,8 +1407,8 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
-  it('clears camelCase codex identityConfuse when disabling from visual editor', () => {
-    const harness = mountUseVisualConfig();
+  it('clears camelCase codex identityConfuse when disabling on a supported legacy CPA', () => {
+    const harness = mountUseVisualConfig({ serverVersion: 'v7.3.2' });
     const yaml = [
       'host: 127.0.0.1',
       'codex:',
