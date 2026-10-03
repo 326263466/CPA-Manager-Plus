@@ -322,6 +322,83 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
+  it('resolves partial mixed v8 structs leaf by leaf', () => {
+    const harness = mountUseVisualConfig();
+    const hash = '$2a$10$legacy-sibling-hash';
+    const yaml = [
+      'management:',
+      '  allow-remote: false',
+      'remote-management:',
+      `  secret-key: '${hash}'`,
+      '  disable-control-panel: true',
+      'server:',
+      '  tls:',
+      '    enable: false',
+      'tls:',
+      '  cert: /legacy-cert.pem',
+      '  key: /legacy-key.pem',
+      'observability:',
+      '  pprof:',
+      '    enable: false',
+      'pprof:',
+      '  addr: 127.0.0.1:9316',
+      'requests:',
+      '  streaming:',
+      '    keepalive-seconds: 15',
+      '  payload:',
+      '    default: []',
+      'streaming:',
+      '  bootstrap-retries: 3',
+      'payload:',
+      '  filter:',
+      '    - models: [legacy-model]',
+      '      params: [temperature]',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    expect(harness.getCurrent().visualValues).toEqual(
+      expect.objectContaining({
+        rmAllowRemote: false,
+        rmSecretKeyConfigured: true,
+        rmDisableControlPanel: true,
+        tlsEnable: false,
+        tlsCert: '/legacy-cert.pem',
+        tlsKey: '/legacy-key.pem',
+        pprofEnable: false,
+        pprofAddr: '127.0.0.1:9316',
+        streaming: expect.objectContaining({
+          keepaliveSeconds: '15',
+          bootstrapRetries: '3',
+        }),
+      })
+    );
+    expect(harness.getCurrent().visualValues.payloadFilterRules).toHaveLength(1);
+
+    act(() => {
+      harness.getCurrent().setVisualValues({ rmAllowRemote: true });
+    });
+    const updated = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      management?: Record<string, unknown>;
+      'remote-management'?: Record<string, unknown>;
+    };
+    expect(updated.management?.['allow-remote']).toBe(true);
+    expect(updated['remote-management']?.['secret-key']).toBe(hash);
+    expect(updated['remote-management']?.['disable-control-panel']).toBe(true);
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(
+        stringifyYaml(updated)
+      ).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.rmSecretKeyConfigured).toBe(true);
+    expect(harness.getCurrent().visualValues.rmDisableControlPanel).toBe(true);
+    harness.unmount();
+  });
+
   it('gives explicit v8 values precedence and preserves legacy sources until CPA migration', () => {
     const harness = mountUseVisualConfig();
     const yaml = [
@@ -404,123 +481,95 @@ describe('useVisualConfig', () => {
     writeHarness.unmount();
   });
 
-  it('preserves complete legacy blocks in v8 documents until CPA can migrate them atomically', () => {
+  it('does not treat config-version 8 alone as a v8 layout', () => {
     const harness = mountUseVisualConfig();
-    const hash = '$2a$10$legacy-management-hash';
     const yaml = [
       'config-version: 8',
+      'request-retry: 4',
       'remote-management:',
-      `  secret-key: '${hash}'`,
       '  allow-remote: true',
-      '  disable-control-panel: true',
-      'tls:',
-      '  enable: true',
-      '  cert: /legacy-cert.pem',
-      '  key: /legacy-key.pem',
-      'pprof:',
-      '  enable: true',
-      '  addr: 127.0.0.1:9316',
-      'streaming:',
-      '  keepalive-seconds: 10',
-      '  bootstrap-retries: 3',
       '',
     ].join('\n');
 
     act(() => {
       expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
-      harness.getCurrent().setVisualValues({
-        rmAllowRemote: false,
-        tlsEnable: false,
-        pprofEnable: false,
-        streaming: {
-          keepaliveSeconds: '30',
-          bootstrapRetries: '3',
-          nonstreamKeepaliveInterval: '',
-        },
-      });
+      harness.getCurrent().setVisualValues({ debug: true });
     });
 
     const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
-      management?: unknown;
-      server?: unknown;
+      debug?: boolean;
       observability?: unknown;
-      requests?: unknown;
+      'request-retry'?: number;
       'remote-management'?: Record<string, unknown>;
-      tls?: Record<string, unknown>;
-      pprof?: Record<string, unknown>;
-      streaming?: Record<string, unknown>;
     };
-
-    expect(parsed.management).toBeUndefined();
-    expect(parsed.server).toBeUndefined();
+    expect(parsed.debug).toBe(true);
     expect(parsed.observability).toBeUndefined();
-    expect(parsed.requests).toBeUndefined();
-    expect(parsed['remote-management']).toEqual({
-      'secret-key': hash,
-      'allow-remote': false,
-      'disable-control-panel': true,
-    });
-    expect(parsed.tls).toEqual({
-      enable: false,
-      cert: '/legacy-cert.pem',
-      key: '/legacy-key.pem',
-    });
-    expect(parsed.pprof).toEqual({
-      enable: false,
-      addr: '127.0.0.1:9316',
-    });
-    expect(parsed.streaming).toEqual({
-      'keepalive-seconds': 30,
-      'bootstrap-retries': 3,
-    });
+    expect(parsed['request-retry']).toBe(4);
+    expect(parsed['remote-management']?.['allow-remote']).toBe(true);
     harness.unmount();
   });
 
-  it('does not materialize canonical provider parents while broader legacy provider blocks remain', () => {
+  it('reads historical Claude v8 aliases with canonical then historical then legacy precedence', () => {
     const harness = mountUseVisualConfig();
     const yaml = [
-      'config-version: 8',
-      'claude:',
-      '  api-key: legacy-claude-key',
-      'codex:',
-      '  identity-confuse: true',
-      'antigravity:',
-      '  project-id: legacy-project',
+      'upstream:',
+      '  claude:',
+      '    disable-claude-cloak-mode: false',
+      '    header-defaults:',
+      '      user-agent: canonical-agent',
+      'oauth:',
+      '  providers:',
+      '    claude:',
+      '      disable-claude-cloak-mode: true',
+      '      header-defaults:',
+      '        user-agent: historical-agent',
+      '        package-version: historical-package',
+      '        os: historical-os',
+      'claude-header-defaults:',
+      '  user-agent: legacy-agent',
+      '  package-version: legacy-package',
+      '  runtime-version: legacy-runtime',
+      '  os: legacy-os',
+      'disable-claude-cloak-mode: true',
       '',
     ].join('\n');
 
     act(() => {
       expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
-      harness.getCurrent().setVisualValues({
-        claudeHeaderUserAgent: 'claude-agent',
-        codexHeaderUserAgent: 'codex-agent',
-        antigravitySignatureCacheEnabled: false,
-        quotaAntigravityCredits: true,
-      });
     });
 
-    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
-      upstream?: unknown;
-      oauth?: unknown;
-      claude?: Record<string, unknown>;
-      codex?: Record<string, unknown>;
-      antigravity?: Record<string, unknown>;
-      'claude-header-defaults'?: Record<string, unknown>;
-      'codex-header-defaults'?: Record<string, unknown>;
-      'antigravity-signature-cache-enabled'?: unknown;
-      'quota-exceeded'?: Record<string, unknown>;
-    };
-
-    expect(parsed.upstream).toBeUndefined();
-    expect(parsed.oauth).toBeUndefined();
-    expect(parsed.claude).toEqual({ 'api-key': 'legacy-claude-key' });
-    expect(parsed.codex).toEqual({ 'identity-confuse': true });
-    expect(parsed.antigravity).toEqual({ 'project-id': 'legacy-project' });
-    expect(parsed['claude-header-defaults']).toEqual({ 'user-agent': 'claude-agent' });
-    expect(parsed['codex-header-defaults']).toEqual({ 'user-agent': 'codex-agent' });
-    expect(parsed['antigravity-signature-cache-enabled']).toBe(false);
-    expect(parsed['quota-exceeded']).toEqual({ 'antigravity-credits': true });
+    expect(harness.getCurrent().visualValues.disableClaudeCloakMode).toBe(false);
+    expect(harness.getCurrent().visualValues.claudeHeaderUserAgent).toBe('canonical-agent');
+    expect(harness.getCurrent().visualValues.claudeHeaderPackageVersion).toBe(
+      'historical-package'
+    );
+    expect(harness.getCurrent().visualValues.claudeHeaderOs).toBe('historical-os');
+    expect(harness.getCurrent().visualValues.claudeHeaderRuntimeVersion).toBe('legacy-runtime');
     harness.unmount();
+
+    const historicalOnly = mountUseVisualConfig();
+    const historicalYaml = [
+      'oauth:',
+      '  providers:',
+      '    claude:',
+      '      disable-claude-cloak-mode: true',
+      '      header-defaults:',
+      '        user-agent: historical-only',
+      '        stabilize-device-profile: false',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(historicalOnly.getCurrent().loadVisualValuesFromYaml(historicalYaml).ok).toBe(true);
+    });
+    expect(historicalOnly.getCurrent().visualValues.disableClaudeCloakMode).toBe(true);
+    expect(historicalOnly.getCurrent().visualValues.claudeHeaderUserAgent).toBe(
+      'historical-only'
+    );
+    expect(
+      historicalOnly.getCurrent().visualValues.claudeHeaderStabilizeDeviceProfile
+    ).toBe(false);
+    historicalOnly.unmount();
   });
 
   it('keeps v8 management secrets on the canonical management path', () => {
