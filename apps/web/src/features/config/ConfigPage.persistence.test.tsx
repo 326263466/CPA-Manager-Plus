@@ -200,8 +200,19 @@ vi.mock('@/components/ui/SegmentedTabs', () => ({
 
 vi.mock('@/stores', () => ({
   useAuthStore: (
-    selector: (state: { connectionStatus: string; managementKey: string }) => unknown
-  ) => selector({ connectionStatus: 'connected', managementKey: 'management-key' }),
+    selector: (state: {
+      connectionStatus: string;
+      managementKey: string;
+      serverVersion: string;
+      serverCommit: string;
+    }) => unknown
+  ) =>
+    selector({
+      connectionStatus: 'connected',
+      managementKey: 'management-key',
+      serverVersion: 'v8.0.11',
+      serverCommit: 'e2bff01',
+    }),
   useNotificationStore: (
     selector: (state: {
       showNotification: typeof mocks.showNotification;
@@ -228,8 +239,8 @@ vi.mock('@/stores', () => ({
 vi.mock('@/hooks/useVisualConfig', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useVisualConfig')>();
   return {
-    useVisualConfig: () => {
-      const realConfig = actual.useVisualConfig();
+    useVisualConfig: (runtime?: Parameters<typeof actual.useVisualConfig>[0]) => {
+      const realConfig = actual.useVisualConfig(runtime);
       if (mocks.useRealVisualConfig) return realConfig;
       return {
         visualValues: {
