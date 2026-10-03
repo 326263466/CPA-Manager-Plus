@@ -381,7 +381,8 @@ describe('useVisualConfig', () => {
     act(() => {
       harness.getCurrent().setVisualValues({ rmAllowRemote: true });
     });
-    const updated = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+    const updatedYaml = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    const updated = parseYaml(updatedYaml) as {
       management?: Record<string, unknown>;
       'remote-management'?: Record<string, unknown>;
     };
@@ -390,9 +391,7 @@ describe('useVisualConfig', () => {
     expect(updated['remote-management']?.['disable-control-panel']).toBe(true);
 
     act(() => {
-      expect(harness.getCurrent().loadVisualValuesFromYaml(
-        stringifyYaml(updated)
-      ).ok).toBe(true);
+      expect(harness.getCurrent().loadVisualValuesFromYaml(updatedYaml).ok).toBe(true);
     });
     expect(harness.getCurrent().visualValues.rmSecretKeyConfigured).toBe(true);
     expect(harness.getCurrent().visualValues.rmDisableControlPanel).toBe(true);
