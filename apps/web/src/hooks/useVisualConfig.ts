@@ -271,12 +271,6 @@ function pathStartsWith(path: YamlPath, prefix: YamlPath): boolean {
   return prefix.length <= path.length && prefix.every((part, index) => path[index] === part);
 }
 
-const VISUAL_CONFIG_V8_PARENT_GUARDS: VisualConfigPathMapping[] = [
-  { legacy: ['claude'], canonical: ['upstream', 'claude'] },
-  { legacy: ['claude-code'], canonical: ['upstream', 'claude'] },
-  { legacy: ['antigravity'], canonical: ['oauth', 'providers', 'antigravity'] },
-];
-
 function findVisualConfigV8Mapping(path: YamlPath): VisualConfigPathMapping | null {
   let best: VisualConfigPathMapping | null = null;
   for (const mapping of VISUAL_CONFIG_V8_PATH_MAPPINGS) {
@@ -307,21 +301,45 @@ function readObjectPath(
   return { found: true, value: current };
 }
 
+function getHistoricalV8Aliases(path: YamlPath): YamlPath[] {
+  if (pathsEqual(path, ['disable-claude-cloak-mode'])) {
+    return [['oauth', 'providers', 'claude', 'disable-claude-cloak-mode']];
+  }
+  const claudeHeaders = ['claude-header-defaults'];
+  if (pathStartsWith(path, claudeHeaders)) {
+    return [
+      [
+        'oauth',
+        'providers',
+        'claude',
+        'header-defaults',
+        ...path.slice(claudeHeaders.length),
+      ],
+    ];
+  }
+  return [];
+}
+
 function readVisualConfigValue(
   parsed: Record<string, unknown>,
   legacyPath: YamlPath,
-  aliases: YamlPath[] = []
+  legacyAliases: YamlPath[] = []
 ): unknown {
   const canonicalPath = mapVisualConfigV8Path(legacyPath);
   if (!pathsEqual(canonicalPath, legacyPath)) {
     const canonical = readObjectPath(parsed, canonicalPath);
     if (canonical.found) return canonical.value;
+
+    for (const alias of getHistoricalV8Aliases(legacyPath)) {
+      const historical = readObjectPath(parsed, alias);
+      if (historical.found) return historical.value;
+    }
   }
 
   const legacy = readObjectPath(parsed, legacyPath);
   if (legacy.found) return legacy.value;
 
-  for (const alias of aliases) {
+  for (const alias of legacyAliases) {
     const fallback = readObjectPath(parsed, alias);
     if (fallback.found) return fallback.value;
   }
@@ -329,9 +347,6 @@ function readVisualConfigValue(
 }
 
 function isV8VisualConfigLayout(parsed: Record<string, unknown>): boolean {
-  const configVersion = parsed['config-version'];
-  if (configVersion === 8 || configVersion === '8') return true;
-
   for (const root of [
     'server',
     'management',
@@ -967,41 +982,46 @@ export function useVisualConfig() {
       const parsed = asRecord(parsedRaw) ?? {};
       const readCompat = (path: YamlPath, aliases: YamlPath[] = []) =>
         readVisualConfigValue(parsed, path, aliases);
-      const tls = asRecord(readCompat(['tls']));
-      const remoteManagement = asRecord(readCompat(['remote-management']));
-      const pprof = asRecord(readCompat(['pprof']));
       const quotaExceeded = asRecord(parsed['quota-exceeded']);
       const routing = asRecord(parsed.routing);
       const plugins = asRecord(parsed.plugins);
-      const payload = asRecord(readCompat(['payload']));
-      const streaming = asRecord(readCompat(['streaming']));
-      const claudeHeaderDefaults = asRecord(readCompat(['claude-header-defaults']));
-      const codexHeaderDefaults = asRecord(readCompat(['codex-header-defaults']));
-      const codex = asRecord(readCompat(['codex']));
-      const devin = asRecord(readCompat(['devin']));
 
       const newValues: VisualConfigValues = {
         host: typeof readCompat(['host']) === 'string' ? (readCompat(['host']) as string) : '',
         port: String(readCompat(['port']) ?? ''),
 
-        tlsEnable: Boolean(tls?.enable),
-        tlsCert: typeof tls?.cert === 'string' ? tls.cert : '',
-        tlsKey: typeof tls?.key === 'string' ? tls.key : '',
+        tlsEnable: Boolean(readCompat(['tls', 'enable'])),
+        tlsCert:
+          typeof readCompat(['tls', 'cert']) === 'string'
+            ? (readCompat(['tls', 'cert']) as string)
+            : '',
+        tlsKey:
+          typeof readCompat(['tls', 'key']) === 'string'
+            ? (readCompat(['tls', 'key']) as string)
+            : '',
 
-        rmAllowRemote: Boolean(remoteManagement?.['allow-remote']),
+        rmAllowRemote: Boolean(readCompat(['remote-management', 'allow-remote'])),
         rmSecretKey: '',
         rmSecretKeyAction: 'unchanged',
         rmSecretKeyConfigured:
-          typeof remoteManagement?.['secret-key'] === 'string' &&
-          remoteManagement['secret-key'].length > 0,
-        rmDisableControlPanel: Boolean(remoteManagement?.['disable-control-panel']),
-        rmDisableAutoUpdatePanel: Boolean(remoteManagement?.['disable-auto-update-panel']),
+          typeof readCompat(['remote-management', 'secret-key']) === 'string' &&
+          (readCompat(['remote-management', 'secret-key']) as string).length > 0,
+        rmDisableControlPanel: Boolean(
+          readCompat(['remote-management', 'disable-control-panel'])
+        ),
+        rmDisableAutoUpdatePanel: Boolean(
+          readCompat(['remote-management', 'disable-auto-update-panel'])
+        ),
         rmPanelRepo:
-          typeof remoteManagement?.['panel-github-repository'] === 'string'
-            ? remoteManagement['panel-github-repository']
-            : typeof remoteManagement?.['panel-repo'] === 'string'
-              ? remoteManagement['panel-repo']
-              : '',
+          typeof readCompat(
+            ['remote-management', 'panel-github-repository'],
+            [['remote-management', 'panel-repo']]
+          ) === 'string'
+            ? (readCompat(
+                ['remote-management', 'panel-github-repository'],
+                [['remote-management', 'panel-repo']]
+              ) as string)
+            : '',
 
         authDir:
           typeof readCompat(['auth-dir']) === 'string' ? (readCompat(['auth-dir']) as string) : '',
@@ -1014,8 +1034,11 @@ export function useVisualConfig() {
         pluginStoreAuth: parsePluginStoreAuthRules(plugins?.['store-auth'] ?? plugins?.storeAuth),
 
         debug: Boolean(readCompat(['debug'])),
-        pprofEnable: Boolean(pprof?.enable),
-        pprofAddr: typeof pprof?.addr === 'string' ? pprof.addr : '127.0.0.1:8316',
+        pprofEnable: Boolean(readCompat(['pprof', 'enable'])),
+        pprofAddr:
+          typeof readCompat(['pprof', 'addr']) === 'string'
+            ? (readCompat(['pprof', 'addr']) as string)
+            : '127.0.0.1:8316',
         commercialMode: Boolean(readCompat(['commercial-mode'])),
         usageStatisticsEnabled: Boolean(
           readCompat(['usage-statistics-enabled'], [['usageStatisticsEnabled']])
@@ -1066,35 +1089,44 @@ export function useVisualConfig() {
           readCompat(['antigravity-signature-bypass-strict'])
         ),
         claudeHeaderUserAgent:
-          typeof claudeHeaderDefaults?.['user-agent'] === 'string'
-            ? claudeHeaderDefaults['user-agent']
+          typeof readCompat(['claude-header-defaults', 'user-agent']) === 'string'
+            ? (readCompat(['claude-header-defaults', 'user-agent']) as string)
             : '',
         claudeHeaderPackageVersion:
-          typeof claudeHeaderDefaults?.['package-version'] === 'string'
-            ? claudeHeaderDefaults['package-version']
+          typeof readCompat(['claude-header-defaults', 'package-version']) === 'string'
+            ? (readCompat(['claude-header-defaults', 'package-version']) as string)
             : '',
         claudeHeaderRuntimeVersion:
-          typeof claudeHeaderDefaults?.['runtime-version'] === 'string'
-            ? claudeHeaderDefaults['runtime-version']
+          typeof readCompat(['claude-header-defaults', 'runtime-version']) === 'string'
+            ? (readCompat(['claude-header-defaults', 'runtime-version']) as string)
             : '',
-        claudeHeaderOs: typeof claudeHeaderDefaults?.os === 'string' ? claudeHeaderDefaults.os : '',
+        claudeHeaderOs:
+          typeof readCompat(['claude-header-defaults', 'os']) === 'string'
+            ? (readCompat(['claude-header-defaults', 'os']) as string)
+            : '',
         claudeHeaderArch:
-          typeof claudeHeaderDefaults?.arch === 'string' ? claudeHeaderDefaults.arch : '',
+          typeof readCompat(['claude-header-defaults', 'arch']) === 'string'
+            ? (readCompat(['claude-header-defaults', 'arch']) as string)
+            : '',
         claudeHeaderTimeout:
-          typeof claudeHeaderDefaults?.timeout === 'string' ? claudeHeaderDefaults.timeout : '',
+          typeof readCompat(['claude-header-defaults', 'timeout']) === 'string'
+            ? (readCompat(['claude-header-defaults', 'timeout']) as string)
+            : '',
         claudeHeaderStabilizeDeviceProfile: Boolean(
-          claudeHeaderDefaults?.['stabilize-device-profile']
+          readCompat(['claude-header-defaults', 'stabilize-device-profile'])
         ),
         codexHeaderUserAgent:
-          typeof codexHeaderDefaults?.['user-agent'] === 'string'
-            ? codexHeaderDefaults['user-agent']
+          typeof readCompat(['codex-header-defaults', 'user-agent']) === 'string'
+            ? (readCompat(['codex-header-defaults', 'user-agent']) as string)
             : '',
         codexHeaderBetaFeatures:
-          typeof codexHeaderDefaults?.['beta-features'] === 'string'
-            ? codexHeaderDefaults['beta-features']
+          typeof readCompat(['codex-header-defaults', 'beta-features']) === 'string'
+            ? (readCompat(['codex-header-defaults', 'beta-features']) as string)
             : '',
-        codexIdentityConfuse: Boolean(codex?.['identity-confuse'] ?? codex?.identityConfuse),
-        devinSensitiveWords: parseStringList(devin?.['sensitive-words']),
+        codexIdentityConfuse: Boolean(
+          readCompat(['codex', 'identity-confuse'], [['codex', 'identityConfuse']])
+        ),
+        devinSensitiveWords: parseStringList(readCompat(['devin', 'sensitive-words'])),
 
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? false),
         quotaSwitchPreviewModel: Boolean(quotaExceeded?.['switch-preview-model'] ?? false),
@@ -1115,15 +1147,15 @@ export function useVisualConfig() {
                 ? routing['sessionAffinityTTL']
                 : '',
 
-        payloadDefaultRules: parsePayloadRules(payload?.default),
-        payloadDefaultRawRules: parseRawPayloadRules(payload?.['default-raw']),
-        payloadOverrideRules: parsePayloadRules(payload?.override),
-        payloadOverrideRawRules: parseRawPayloadRules(payload?.['override-raw']),
-        payloadFilterRules: parsePayloadFilterRules(payload?.filter),
+        payloadDefaultRules: parsePayloadRules(readCompat(['payload', 'default'])),
+        payloadDefaultRawRules: parseRawPayloadRules(readCompat(['payload', 'default-raw'])),
+        payloadOverrideRules: parsePayloadRules(readCompat(['payload', 'override'])),
+        payloadOverrideRawRules: parseRawPayloadRules(readCompat(['payload', 'override-raw'])),
+        payloadFilterRules: parsePayloadFilterRules(readCompat(['payload', 'filter'])),
 
         streaming: {
-          keepaliveSeconds: String(streaming?.['keepalive-seconds'] ?? ''),
-          bootstrapRetries: String(streaming?.['bootstrap-retries'] ?? ''),
+          keepaliveSeconds: String(readCompat(['streaming', 'keepalive-seconds']) ?? ''),
+          bootstrapRetries: String(readCompat(['streaming', 'bootstrap-retries']) ?? ''),
           nonstreamKeepaliveInterval: String(
             readCompat(['nonstream-keepalive-interval']) ?? ''
           ),
@@ -1151,41 +1183,8 @@ export function useVisualConfig() {
         const isDirty = (key: string) => dirtyFields.has(key);
         const parsedCurrent = asRecord(parseYaml(currentYaml)) ?? {};
         const useV8Layout = isV8VisualConfigLayout(parsedCurrent);
-        const mappedPath = (path: YamlPath) => {
-          if (!useV8Layout) return path;
-
-          const mapping = findVisualConfigV8Mapping(path);
-          if (!mapping) return path;
-
-          const canonicalPath = [
-            ...mapping.canonical,
-            ...path.slice(mapping.legacy.length),
-          ];
-
-          // If the canonical block already exists, it is authoritative in CPA v8.
-          if (docHas(doc, mapping.canonical)) return canonicalPath;
-
-          // If this field's legacy block is still the source, keep editing it in place.
-          // CPA will migrate the complete block atomically on the subsequent v8 write.
-          if (docHas(doc, mapping.legacy)) return path;
-
-          // Avoid materializing a canonical child below a broader canonical block while
-          // that broader block still exists only in legacy form. Doing so would cause
-          // CPA NormalizeConfigLayout(..., true) to delete the broader legacy block
-          // without merging its untouched siblings.
-          const parentGuards = [
-            ...VISUAL_CONFIG_V8_PATH_MAPPINGS,
-            ...VISUAL_CONFIG_V8_PARENT_GUARDS,
-          ];
-          const hasLegacyCanonicalAncestor = parentGuards.some((guard) => {
-            if (!pathStartsWith(canonicalPath, guard.canonical)) return false;
-            if (pathsEqual(canonicalPath, guard.canonical)) return false;
-            return docHas(doc, guard.legacy) && !docHas(doc, guard.canonical);
-          });
-          if (hasLegacyCanonicalAncestor) return path;
-
-          return canonicalPath;
-        };
+        const mappedPath = (path: YamlPath) =>
+          useV8Layout ? mapVisualConfigV8Path(path) : path;
         const pruneEmptyParents = (path: YamlPath) => {
           for (let length = path.length - 1; length >= 1; length -= 1) {
             deleteIfMapEmpty(doc, path.slice(0, length));
