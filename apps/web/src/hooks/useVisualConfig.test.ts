@@ -568,6 +568,44 @@ describe('useVisualConfig', () => {
     expect(
       historicalOnly.getCurrent().visualValues.claudeHeaderStabilizeDeviceProfile
     ).toBe(false);
+
+    act(() => {
+      historicalOnly.getCurrent().setVisualValues({
+        disableClaudeCloakMode: false,
+        claudeHeaderUserAgent: '',
+      });
+    });
+    const historicalUpdated = parseYaml(
+      historicalOnly.getCurrent().applyVisualChangesToYaml(historicalYaml)
+    ) as {
+      upstream?: {
+        claude?: {
+          'disable-claude-cloak-mode'?: boolean;
+          'header-defaults'?: Record<string, unknown>;
+        };
+      };
+      oauth?: {
+        providers?: {
+          claude?: {
+            'disable-claude-cloak-mode'?: unknown;
+            'header-defaults'?: Record<string, unknown>;
+          };
+        };
+      };
+    };
+    expect(historicalUpdated.upstream?.claude?.['disable-claude-cloak-mode']).toBe(false);
+    expect(historicalUpdated.upstream?.claude?.['header-defaults']?.['user-agent']).toBe('');
+    expect(
+      historicalUpdated.oauth?.providers?.claude?.['disable-claude-cloak-mode']
+    ).toBeUndefined();
+    expect(
+      historicalUpdated.oauth?.providers?.claude?.['header-defaults']?.['user-agent']
+    ).toBeUndefined();
+    expect(
+      historicalUpdated.oauth?.providers?.claude?.['header-defaults']?.[
+        'stabilize-device-profile'
+      ]
+    ).toBe(false);
     historicalOnly.unmount();
   });
 
