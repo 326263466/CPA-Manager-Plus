@@ -168,6 +168,110 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
+  it('does not resurrect a cleared sibling when another field recreates the same v8 parent', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = [
+      'observability:',
+      '  logs:',
+      '    logs-max-total-size-mb: 256',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({
+        logsMaxTotalSizeMb: '',
+        errorLogsMaxFiles: '8',
+      });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      observability?: { logs?: Record<string, unknown> };
+    };
+    expect(parsed.observability?.logs?.['logs-max-total-size-mb']).toBeUndefined();
+    expect(parsed.observability?.logs?.['error-logs-max-files']).toBe(8);
+    harness.unmount();
+  });
+
+  it('overrides legacy root-merge scalars with explicit false, empty, and null defaults', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = [
+      'defaults: &legacy',
+      '  debug: true',
+      '  proxy-url: http://old.proxy',
+      '  request-retry: 3',
+      '<<: *legacy',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({
+        debug: false,
+        proxyUrl: '',
+        requestRetry: '',
+      });
+    });
+
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    const parsed = parseYaml(updated, { merge: true }) as Record<string, unknown>;
+    expect(parsed.debug).toBe(false);
+    expect(parsed['proxy-url']).toBe('');
+    expect(parsed['request-retry']).toBeNull();
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(updated).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.debug).toBe(false);
+    expect(harness.getCurrent().visualValues.proxyUrl).toBe('');
+    expect(harness.getCurrent().visualValues.requestRetry).toBe('');
+    harness.unmount();
+  });
+
+  it.each([
+    {
+      name: 'root merge',
+      yaml: [
+        'defaults: &root',
+        '  api-keys:',
+        '    gemini:',
+        '      - keys:',
+        '          - api-key: upstream-only',
+        '<<: *root',
+        '',
+      ].join('\n'),
+    },
+    {
+      name: 'direct alias',
+      yaml: [
+        'groups: &groups',
+        '  gemini:',
+        '    - keys:',
+        '        - api-key: upstream-only',
+        'api-keys: *groups',
+        '',
+      ].join('\n'),
+    },
+  ])('preserves effective upstream API-key groups provided through $name', ({ yaml }) => {
+    const harness = mountUseVisualConfig();
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({ apiKeysText: 'sk-client' });
+    });
+
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    const parsed = parseYaml(updated, { merge: true }) as {
+      access?: { 'api-keys'?: string[] };
+      'api-keys'?: Record<string, unknown>;
+    };
+    expect(parsed.access?.['api-keys']).toEqual(['sk-client']);
+    expect(parsed['api-keys']).toEqual({
+      gemini: [{ keys: [{ 'api-key': 'upstream-only' }] }],
+    });
+    harness.unmount();
+  });
+
   it('loads CPA v8 canonical paths across existing visual config groups', () => {
     const harness = mountUseVisualConfig();
     const yaml = [
@@ -197,7 +301,6 @@ describe('useVisualConfig', () => {
       '      signature-bypass-strict: true',
       '      antigravity-credits: true',
       '    codex:',
-      '      identity-confuse: true',
       '      header-defaults:',
       '        user-agent: codex-test',
       '        beta-features: feature-a',
@@ -305,7 +408,8 @@ describe('useVisualConfig', () => {
         claudeHeaderStabilizeDeviceProfile: true,
         codexHeaderUserAgent: 'codex-test',
         codexHeaderBetaFeatures: 'feature-a',
-        codexIdentityConfuse: true,
+        codexIdentityConfuse: false,
+        codexIdentityConfuseSupported: false,
         devinSensitiveWords: ['alpha', 'beta'],
         routingStrategy: 'weighted-round-robin',
         routingSessionAffinity: true,
@@ -1163,6 +1267,32 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
+  it('does not expose or write the removed Codex identity-confuse option on v8', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = [
+      'oauth:',
+      '  providers:',
+      '    codex:',
+      '      header-defaults:',
+      '        user-agent: codex-test',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.codexIdentityConfuse).toBe(false);
+    expect(harness.getCurrent().visualValues.codexIdentityConfuseSupported).toBe(false);
+
+    act(() => {
+      harness.getCurrent().setVisualValues({ codexIdentityConfuse: true });
+    });
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    expect(updated).not.toContain('identity-confuse');
+    expect(updated).not.toContain('identityConfuse');
+    harness.unmount();
+  });
+
   it('clears camelCase codex identityConfuse when disabling from visual editor', () => {
     const harness = mountUseVisualConfig();
     const yaml = [
@@ -1178,6 +1308,7 @@ describe('useVisualConfig', () => {
       expect(result.ok).toBe(true);
     });
     expect(harness.getCurrent().visualValues.codexIdentityConfuse).toBe(true);
+    expect(harness.getCurrent().visualValues.codexIdentityConfuseSupported).toBe(true);
 
     act(() => {
       harness.getCurrent().setVisualValues({ codexIdentityConfuse: false });
