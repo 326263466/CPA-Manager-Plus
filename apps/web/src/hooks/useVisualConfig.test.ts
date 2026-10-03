@@ -322,7 +322,7 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
-  it('gives explicit v8 values precedence and writes dirty legacy fallbacks to canonical paths', () => {
+  it('gives explicit v8 values precedence and preserves legacy sources until CPA migration', () => {
     const harness = mountUseVisualConfig();
     const yaml = [
       'config-version: 8',
@@ -377,22 +377,22 @@ describe('useVisualConfig', () => {
     const updated = writeHarness.getCurrent().applyVisualChangesToYaml(legacyFallbacks);
     const parsed = parseYaml(updated) as {
       management?: Record<string, unknown>;
-      observability?: { usage?: Record<string, unknown> };
+      observability?: Record<string, unknown>;
       requests?: Record<string, unknown>;
-      routing?: { retry?: Record<string, unknown> };
-      'remote-management'?: unknown;
+      routing?: Record<string, unknown>;
+      'remote-management'?: Record<string, unknown>;
       'usage-statistics-enabled'?: unknown;
       'proxy-url'?: unknown;
       'request-retry'?: unknown;
     };
-    expect(parsed.management?.['allow-remote']).toBe(false);
-    expect(parsed.observability?.usage?.['usage-statistics-enabled']).toBe(false);
-    expect(parsed.requests?.['proxy-url']).toBe('');
-    expect(parsed.routing?.retry?.['request-retry']).toBe(0);
-    expect(parsed['remote-management']).toBeUndefined();
-    expect(parsed['usage-statistics-enabled']).toBeUndefined();
-    expect(parsed['proxy-url']).toBeUndefined();
-    expect(parsed['request-retry']).toBeUndefined();
+    expect(parsed['remote-management']).toEqual({ 'allow-remote': false });
+    expect(parsed['usage-statistics-enabled']).toBe(false);
+    expect(parsed['proxy-url']).toBe('');
+    expect(parsed['request-retry']).toBe(0);
+    expect(parsed.management).toBeUndefined();
+    expect(parsed.observability).toBeUndefined();
+    expect(parsed.requests).toBeUndefined();
+    expect(parsed.routing).toBeUndefined();
 
     act(() => {
       expect(writeHarness.getCurrent().loadVisualValuesFromYaml(updated).ok).toBe(true);
@@ -433,8 +433,9 @@ describe('useVisualConfig', () => {
         tlsEnable: false,
         pprofEnable: false,
         streaming: {
-          ...harness.getCurrent().visualValues.streaming,
           keepaliveSeconds: '30',
+          bootstrapRetries: '3',
+          nonstreamKeepaliveInterval: '',
         },
       });
     });
