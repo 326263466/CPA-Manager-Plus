@@ -159,6 +159,67 @@ function resolveApiKeysText(parsed: Record<string, unknown>): string {
   return parseApiKeysText(configApiKeyProvider['api-keys']);
 }
 
+type CodexIdentityConfuseCompatibility = 'supported' | 'unsupported' | 'unverified';
+
+type VisualConfigRuntime = {
+  serverVersion?: string | null;
+  serverCommit?: string | null;
+};
+
+const CODEX_IDENTITY_CONFUSE_REMOVAL_COMMIT = '48686ccc';
+const CODEX_IDENTITY_CONFUSE_LAST_SUPPORTED_VERSION = [8, 0, 3] as const;
+const CODEX_IDENTITY_CONFUSE_REMOVED_VERSION = [8, 0, 4] as const;
+const CPA_RELEASE_VERSION_PATTERN =
+  /^v?(\d+)\.(\d+)\.(\d+)(?:-(?:alpha|beta|rc)(?:[.-]?\d+)?)?$/i;
+const CPA_GIT_DESCRIBE_VERSION_PATTERN =
+  /^v?(\d+)\.(\d+)\.(\d+)-(\d+)-g([0-9a-f]+)(?:-dirty)?$/i;
+
+function compareCpaVersion(current: readonly number[], baseline: readonly number[]): number {
+  for (let index = 0; index < baseline.length; index += 1) {
+    const difference = current[index] - baseline[index];
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function isExactCpaCommit(serverCommit: string | null | undefined, expected: string): boolean {
+  const normalized = serverCommit?.trim().toLowerCase().replace(/^g/, '') ?? '';
+  if (normalized.length < 7) return false;
+  return normalized.startsWith(expected) || expected.startsWith(normalized);
+}
+
+export function getCodexIdentityConfuseCompatibility(
+  serverVersion?: string | null,
+  serverCommit?: string | null
+): CodexIdentityConfuseCompatibility {
+  if (isExactCpaCommit(serverCommit, CODEX_IDENTITY_CONFUSE_REMOVAL_COMMIT)) {
+    return 'unsupported';
+  }
+
+  const normalizedVersion = serverVersion?.trim() ?? '';
+  const describeMatch = normalizedVersion.match(CPA_GIT_DESCRIBE_VERSION_PATTERN);
+  if (describeMatch) {
+    const baseVersion = describeMatch.slice(1, 4).map((segment) => Number.parseInt(segment, 10));
+    const baseComparison = compareCpaVersion(
+      baseVersion,
+      CODEX_IDENTITY_CONFUSE_LAST_SUPPORTED_VERSION
+    );
+    if (baseComparison < 0) return 'supported';
+    if (baseComparison > 0) return 'unsupported';
+
+    // Upstream removed identity-confuse in the first commit after v8.0.3.
+    const distance = Number.parseInt(describeMatch[4], 10);
+    return distance === 0 ? 'supported' : 'unsupported';
+  }
+
+  const releaseMatch = normalizedVersion.match(CPA_RELEASE_VERSION_PATTERN);
+  if (!releaseMatch) return 'unverified';
+  const current = releaseMatch.slice(1, 4).map((segment) => Number.parseInt(segment, 10));
+  return compareCpaVersion(current, CODEX_IDENTITY_CONFUSE_REMOVED_VERSION) >= 0
+    ? 'unsupported'
+    : 'supported';
+}
+
 type YamlDocument = ReturnType<typeof parseDocument>;
 type YamlPath = string[];
 
@@ -208,6 +269,10 @@ const VISUAL_CONFIG_V8_PATH_MAPPINGS: VisualConfigPathMapping[] = [
   {
     legacy: ['codex-header-defaults'],
     canonical: ['oauth', 'providers', 'codex', 'header-defaults'],
+  },
+  {
+    legacy: ['codex', 'identity-confuse'],
+    canonical: ['oauth', 'providers', 'codex', 'identity-confuse'],
   },
   {
     legacy: ['disable-claude-cloak-mode'],
@@ -1019,13 +1084,34 @@ function visualConfigReducer(
   }
 }
 
-export function useVisualConfig() {
+export function useVisualConfig(runtime: VisualConfigRuntime = {}) {
   const [state, dispatch] = useReducer(
     visualConfigReducer,
     undefined,
     createInitialVisualConfigState
   );
-  const { visualValues, visualParseError, dirtyFields } = state;
+  const {
+    visualValues: storedVisualValues,
+    visualParseError,
+    dirtyFields,
+  } = state;
+  const codexIdentityConfuseCompatibility = getCodexIdentityConfuseCompatibility(
+    runtime.serverVersion,
+    runtime.serverCommit
+  );
+  // Unknown/custom builds are conservative: do not expose a removed upstream
+  // control unless the connected CPA version is known to support it.
+  const codexIdentityConfuseSupported = codexIdentityConfuseCompatibility === 'supported';
+  const visualValues = useMemo<VisualConfigValues>(
+    () => ({
+      ...storedVisualValues,
+      codexIdentityConfuse: codexIdentityConfuseSupported
+        ? storedVisualValues.codexIdentityConfuse
+        : false,
+      codexIdentityConfuseSupported,
+    }),
+    [codexIdentityConfuseSupported, storedVisualValues]
+  );
   const visualDirty = dirtyFields.size > 0;
   const visualValidationErrors = useMemo(
     () => getVisualConfigValidationErrors(visualValues),
@@ -1054,7 +1140,6 @@ export function useVisualConfig() {
 
       const parsedRaw: unknown = parseYaml(yamlContent, YAML_EFFECTIVE_PARSE_OPTIONS) || {};
       const parsed = asRecord(parsedRaw) ?? {};
-      const v8Layout = isV8VisualConfigLayout(parsed);
       const readCompat = (path: YamlPath, aliases: YamlPath[] = []) =>
         readVisualConfigValue(parsed, path, aliases);
       const quotaExceeded = asRecord(parsed['quota-exceeded']);
@@ -1198,12 +1283,12 @@ export function useVisualConfig() {
           typeof readCompat(['codex-header-defaults', 'beta-features']) === 'string'
             ? (readCompat(['codex-header-defaults', 'beta-features']) as string)
             : '',
-        codexIdentityConfuse: v8Layout
-          ? false
-          : Boolean(
-              readCompat(['codex', 'identity-confuse'], [['codex', 'identityConfuse']])
-            ),
-        codexIdentityConfuseSupported: !v8Layout,
+        codexIdentityConfuse: Boolean(
+          readCompat(['codex', 'identity-confuse'], [['codex', 'identityConfuse']])
+        ),
+        // Runtime support is overlaid on returned visualValues so a late version
+        // header can update the UI without reparsing the YAML.
+        codexIdentityConfuseSupported: true,
         devinSensitiveWords: parseStringList(readCompat(['devin', 'sensitive-words'])),
 
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? false),
@@ -1757,7 +1842,7 @@ export function useVisualConfig() {
 
         const codexIdentityConfusePath = ['codex', 'identity-confuse'];
         const codexIdentityConfuseLegacyPath = ['codex', 'identityConfuse'];
-        if (isDirty('codexIdentityConfuse') && !useV8Layout) {
+        if (isDirty('codexIdentityConfuse') && codexIdentityConfuseSupported) {
           ensureCompatMap(['codex']);
           setCompatValue(codexIdentityConfusePath, values.codexIdentityConfuse);
           if (hasCompat(codexIdentityConfuseLegacyPath)) {
@@ -1914,7 +1999,7 @@ export function useVisualConfig() {
         return currentYaml;
       }
     },
-    [dirtyFields, visualValues]
+    [codexIdentityConfuseSupported, dirtyFields, visualValues]
   );
 
   const setVisualValues = useCallback((newValues: Partial<VisualConfigValues>) => {
