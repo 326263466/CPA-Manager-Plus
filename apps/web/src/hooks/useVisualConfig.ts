@@ -1216,10 +1216,16 @@ export function useVisualConfig() {
         };
         const legacyAlternative = (path: YamlPath, target: YamlPath) =>
           useV8Layout && !pathsEqual(path, target) ? path : null;
+        const historicalAlternatives = (path: YamlPath, target: YamlPath) =>
+          useV8Layout && !pathsEqual(path, target) ? getHistoricalV8Aliases(path) : [];
         const hasCompat = (path: YamlPath) => {
           const target = mappedPath(path);
           const legacy = legacyAlternative(path, target);
-          return docHas(doc, target) || Boolean(legacy && docHas(doc, legacy));
+          return (
+            docHas(doc, target) ||
+            historicalAlternatives(path, target).some((alias) => docHas(doc, alias)) ||
+            Boolean(legacy && docHas(doc, legacy))
+          );
         };
         const deleteCompat = (path: YamlPath) => {
           const target = mappedPath(path);
@@ -1228,12 +1234,24 @@ export function useVisualConfig() {
             doc.deleteIn(target);
             pruneEmptyParents(target);
           }
+          for (const alias of historicalAlternatives(path, target)) {
+            if (docHas(doc, alias)) {
+              doc.deleteIn(alias);
+              pruneEmptyParents(alias);
+            }
+          }
           if (legacy && docHas(doc, legacy)) {
             doc.deleteIn(legacy);
             pruneEmptyParents(legacy);
           }
         };
-        const dropLegacyAlternative = (path: YamlPath, target: YamlPath) => {
+        const dropCompatibilityAlternatives = (path: YamlPath, target: YamlPath) => {
+          for (const alias of historicalAlternatives(path, target)) {
+            if (docHas(doc, alias)) {
+              doc.deleteIn(alias);
+              pruneEmptyParents(alias);
+            }
+          }
           const legacy = legacyAlternative(path, target);
           if (legacy && docHas(doc, legacy)) {
             doc.deleteIn(legacy);
@@ -1249,6 +1267,10 @@ export function useVisualConfig() {
           const target = mappedPath(path);
           deleteIfMapEmpty(doc, target);
           pruneEmptyParents(target);
+          for (const alias of historicalAlternatives(path, target)) {
+            deleteIfMapEmpty(doc, alias);
+            pruneEmptyParents(alias);
+          }
           const legacy = legacyAlternative(path, target);
           if (legacy) {
             deleteIfMapEmpty(doc, legacy);
@@ -1259,14 +1281,14 @@ export function useVisualConfig() {
           const target = mappedPath(path);
           ensureParents(target);
           doc.setIn(target, value);
-          dropLegacyAlternative(path, target);
+          dropCompatibilityAlternatives(path, target);
         };
         const setCompatBoolean = (path: YamlPath, value: boolean) => {
           const target = mappedPath(path);
           if (useV8Layout && !pathsEqual(target, path)) {
             ensureParents(target);
             doc.setIn(target, value);
-            dropLegacyAlternative(path, target);
+            dropCompatibilityAlternatives(path, target);
             return;
           }
           setBooleanInDoc(doc, target, value);
@@ -1279,7 +1301,7 @@ export function useVisualConfig() {
               ensureParents(target);
               doc.setIn(target, safe);
             }
-            dropLegacyAlternative(path, target);
+            dropCompatibilityAlternatives(path, target);
             return;
           }
           setStringInDoc(doc, target, value);
@@ -1298,7 +1320,7 @@ export function useVisualConfig() {
             if (!Number.isFinite(parsed)) return;
             ensureParents(target);
             doc.setIn(target, parsed);
-            dropLegacyAlternative(path, target);
+            dropCompatibilityAlternatives(path, target);
             return;
           }
           setIntFromStringInDoc(doc, target, value);
@@ -1318,7 +1340,7 @@ export function useVisualConfig() {
                   ? true
                   : false
             );
-            dropLegacyAlternative(path, target);
+            dropCompatibilityAlternatives(path, target);
             return;
           }
           setDisableImageGenerationInDoc(doc, target, value);
