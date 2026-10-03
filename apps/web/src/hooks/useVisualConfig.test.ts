@@ -404,6 +404,124 @@ describe('useVisualConfig', () => {
     writeHarness.unmount();
   });
 
+  it('preserves complete legacy blocks in v8 documents until CPA can migrate them atomically', () => {
+    const harness = mountUseVisualConfig();
+    const hash = '$2a$10$legacy-management-hash';
+    const yaml = [
+      'config-version: 8',
+      'remote-management:',
+      `  secret-key: '${hash}'`,
+      '  allow-remote: true',
+      '  disable-control-panel: true',
+      'tls:',
+      '  enable: true',
+      '  cert: /legacy-cert.pem',
+      '  key: /legacy-key.pem',
+      'pprof:',
+      '  enable: true',
+      '  addr: 127.0.0.1:9316',
+      'streaming:',
+      '  keepalive-seconds: 10',
+      '  bootstrap-retries: 3',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({
+        rmAllowRemote: false,
+        tlsEnable: false,
+        pprofEnable: false,
+        streaming: {
+          ...harness.getCurrent().visualValues.streaming,
+          keepaliveSeconds: '30',
+        },
+      });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      management?: unknown;
+      server?: unknown;
+      observability?: unknown;
+      requests?: unknown;
+      'remote-management'?: Record<string, unknown>;
+      tls?: Record<string, unknown>;
+      pprof?: Record<string, unknown>;
+      streaming?: Record<string, unknown>;
+    };
+
+    expect(parsed.management).toBeUndefined();
+    expect(parsed.server).toBeUndefined();
+    expect(parsed.observability).toBeUndefined();
+    expect(parsed.requests).toBeUndefined();
+    expect(parsed['remote-management']).toEqual({
+      'secret-key': hash,
+      'allow-remote': false,
+      'disable-control-panel': true,
+    });
+    expect(parsed.tls).toEqual({
+      enable: false,
+      cert: '/legacy-cert.pem',
+      key: '/legacy-key.pem',
+    });
+    expect(parsed.pprof).toEqual({
+      enable: false,
+      addr: '127.0.0.1:9316',
+    });
+    expect(parsed.streaming).toEqual({
+      'keepalive-seconds': 30,
+      'bootstrap-retries': 3,
+    });
+    harness.unmount();
+  });
+
+  it('does not materialize canonical provider parents while broader legacy provider blocks remain', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = [
+      'config-version: 8',
+      'claude:',
+      '  api-key: legacy-claude-key',
+      'codex:',
+      '  identity-confuse: true',
+      'antigravity:',
+      '  project-id: legacy-project',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({
+        claudeHeaderUserAgent: 'claude-agent',
+        codexHeaderUserAgent: 'codex-agent',
+        antigravitySignatureCacheEnabled: false,
+        quotaAntigravityCredits: true,
+      });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      upstream?: unknown;
+      oauth?: unknown;
+      claude?: Record<string, unknown>;
+      codex?: Record<string, unknown>;
+      antigravity?: Record<string, unknown>;
+      'claude-header-defaults'?: Record<string, unknown>;
+      'codex-header-defaults'?: Record<string, unknown>;
+      'antigravity-signature-cache-enabled'?: unknown;
+      'quota-exceeded'?: Record<string, unknown>;
+    };
+
+    expect(parsed.upstream).toBeUndefined();
+    expect(parsed.oauth).toBeUndefined();
+    expect(parsed.claude).toEqual({ 'api-key': 'legacy-claude-key' });
+    expect(parsed.codex).toEqual({ 'identity-confuse': true });
+    expect(parsed.antigravity).toEqual({ 'project-id': 'legacy-project' });
+    expect(parsed['claude-header-defaults']).toEqual({ 'user-agent': 'claude-agent' });
+    expect(parsed['codex-header-defaults']).toEqual({ 'user-agent': 'codex-agent' });
+    expect(parsed['antigravity-signature-cache-enabled']).toBe(false);
+    expect(parsed['quota-exceeded']).toEqual({ 'antigravity-credits': true });
+    harness.unmount();
+  });
+
   it('keeps v8 management secrets on the canonical management path', () => {
     const harness = mountUseVisualConfig();
     const hash = '$2a$10$existing-management-hash';
