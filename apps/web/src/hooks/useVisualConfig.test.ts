@@ -609,6 +609,130 @@ describe('useVisualConfig', () => {
     historicalOnly.unmount();
   });
 
+  it('materializes only the edited aliased management branch and preserves inherited siblings', () => {
+    const harness = mountUseVisualConfig();
+    const hash = '$2a$10$aliased-management-hash';
+    const yaml = [
+      'defaults: &management',
+      `  secret-key: '${hash}'`,
+      '  allow-remote: true',
+      '  disable-control-panel: true',
+      'management: *management',
+      'other: *management',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({ rmAllowRemote: false });
+    });
+
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    const effective = parseYaml(updated, { merge: true }) as {
+      management?: Record<string, unknown>;
+      other?: Record<string, unknown>;
+    };
+
+    expect(effective.management?.['secret-key']).toBe(hash);
+    expect(effective.management?.['allow-remote']).toBe(false);
+    expect(effective.management?.['disable-control-panel']).toBe(true);
+    expect(effective.other?.['allow-remote']).toBe(true);
+    expect(updated).toContain('other: *management');
+    harness.unmount();
+  });
+
+  it('reads merge-key inheritance and can clear an inherited management secret safely', () => {
+    const harness = mountUseVisualConfig();
+    const hash = '$2a$10$merged-management-hash';
+    const yaml = [
+      'defaults: &management',
+      `  secret-key: '${hash}'`,
+      '  allow-remote: true',
+      '  disable-control-panel: true',
+      'management:',
+      '  <<: *management',
+      '  allow-remote: false',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.rmSecretKeyConfigured).toBe(true);
+    expect(harness.getCurrent().visualValues.rmAllowRemote).toBe(false);
+    expect(harness.getCurrent().visualValues.rmDisableControlPanel).toBe(true);
+
+    act(() => {
+      harness.getCurrent().setVisualValues({ rmSecretKey: '', rmSecretKeyAction: 'clear' });
+    });
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    const effective = parseYaml(updated, { merge: true }) as {
+      management?: Record<string, unknown>;
+    };
+    expect(effective.management?.['secret-key']).toBe('');
+    expect(effective.management?.['allow-remote']).toBe(false);
+    expect(effective.management?.['disable-control-panel']).toBe(true);
+    harness.unmount();
+  });
+
+  it('detects v8 canonical paths inherited through a root merge before writing', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = [
+      'defaults: &root',
+      '  requests:',
+      '    proxy-url: http://old.proxy',
+      '  observability:',
+      '    usage:',
+      '      usage-statistics-enabled: true',
+      '<<: *root',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.proxyUrl).toBe('http://old.proxy');
+    expect(harness.getCurrent().visualValues.usageStatisticsEnabled).toBe(true);
+
+    act(() => {
+      harness.getCurrent().setVisualValues({ proxyUrl: 'http://new.proxy' });
+    });
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    const effective = parseYaml(updated, { merge: true }) as {
+      requests?: Record<string, unknown>;
+      'proxy-url'?: unknown;
+    };
+    expect(effective.requests?.['proxy-url']).toBe('http://new.proxy');
+    expect(effective['proxy-url']).toBeUndefined();
+    harness.unmount();
+  });
+
+  it('preserves an unedited scalar alias while changing a sibling management field', () => {
+    const harness = mountUseVisualConfig();
+    const hash = '$2a$10$scalar-alias-hash';
+    const yaml = [
+      `password: &password '${hash}'`,
+      'management:',
+      '  secret-key: *password',
+      '  allow-remote: true',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({ rmAllowRemote: false });
+    });
+
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    const effective = parseYaml(updated, { merge: true }) as {
+      management?: Record<string, unknown>;
+    };
+    expect(effective.management?.['secret-key']).toBe(hash);
+    expect(effective.management?.['allow-remote']).toBe(false);
+    expect(updated).toContain('secret-key: *password');
+    harness.unmount();
+  });
+
   it('keeps v8 management secrets on the canonical management path', () => {
     const harness = mountUseVisualConfig();
     const hash = '$2a$10$existing-management-hash';
