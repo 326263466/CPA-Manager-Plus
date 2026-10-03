@@ -707,6 +707,36 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
+  it('removes an inherited merged payload leaf instead of letting it reappear', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = [
+      'payload-defaults: &payload',
+      '  filter:',
+      '    - models: [legacy-model]',
+      '      params: [temperature]',
+      'requests:',
+      '  payload:',
+      '    <<: *payload',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+    expect(harness.getCurrent().visualValues.payloadFilterRules).toHaveLength(1);
+
+    act(() => {
+      harness.getCurrent().setVisualValues({ payloadFilterRules: [] });
+    });
+
+    const updated = harness.getCurrent().applyVisualChangesToYaml(yaml);
+    const effective = parseYaml(updated, { merge: true }) as {
+      requests?: { payload?: Record<string, unknown> };
+    };
+    expect(effective.requests?.payload?.filter).toBeUndefined();
+    harness.unmount();
+  });
+
   it('preserves an unedited scalar alias while changing a sibling management field', () => {
     const harness = mountUseVisualConfig();
     const hash = '$2a$10$scalar-alias-hash';
