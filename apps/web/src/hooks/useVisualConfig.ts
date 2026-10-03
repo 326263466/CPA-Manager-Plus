@@ -363,6 +363,25 @@ function isV8VisualConfigLayout(parsed: Record<string, unknown>): boolean {
 
   if (asRecord(parsed['api-keys'])) return true;
 
+  const clientCodex = asRecord(asRecord(parsed.client)?.codex);
+  if (
+    clientCodex &&
+    Object.prototype.hasOwnProperty.call(clientCodex, 'optimize-multi-agent-v2')
+  ) {
+    return true;
+  }
+
+  const historicalProviderCodex = asRecord(asRecord(parsed.providers)?.codex);
+  if (
+    historicalProviderCodex &&
+    Object.prototype.hasOwnProperty.call(
+      historicalProviderCodex,
+      'optimize-multi-agent-v2'
+    )
+  ) {
+    return true;
+  }
+
   const routing = asRecord(parsed.routing);
   return Boolean(
     routing &&
