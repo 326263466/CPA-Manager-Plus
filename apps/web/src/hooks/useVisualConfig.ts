@@ -271,14 +271,25 @@ function pathStartsWith(path: YamlPath, prefix: YamlPath): boolean {
   return prefix.length <= path.length && prefix.every((part, index) => path[index] === part);
 }
 
-function mapVisualConfigV8Path(path: YamlPath): YamlPath {
+const VISUAL_CONFIG_V8_PARENT_GUARDS: VisualConfigPathMapping[] = [
+  { legacy: ['claude'], canonical: ['upstream', 'claude'] },
+  { legacy: ['claude-code'], canonical: ['upstream', 'claude'] },
+  { legacy: ['antigravity'], canonical: ['oauth', 'providers', 'antigravity'] },
+];
+
+function findVisualConfigV8Mapping(path: YamlPath): VisualConfigPathMapping | null {
   let best: VisualConfigPathMapping | null = null;
   for (const mapping of VISUAL_CONFIG_V8_PATH_MAPPINGS) {
     if (!pathStartsWith(path, mapping.legacy)) continue;
     if (!best || mapping.legacy.length > best.legacy.length) best = mapping;
   }
-  if (!best) return path;
-  return [...best.canonical, ...path.slice(best.legacy.length)];
+  return best;
+}
+
+function mapVisualConfigV8Path(path: YamlPath): YamlPath {
+  const mapping = findVisualConfigV8Mapping(path);
+  if (!mapping) return path;
+  return [...mapping.canonical, ...path.slice(mapping.legacy.length)];
 }
 
 function readObjectPath(
@@ -1140,8 +1151,41 @@ export function useVisualConfig() {
         const isDirty = (key: string) => dirtyFields.has(key);
         const parsedCurrent = asRecord(parseYaml(currentYaml)) ?? {};
         const useV8Layout = isV8VisualConfigLayout(parsedCurrent);
-        const mappedPath = (path: YamlPath) =>
-          useV8Layout ? mapVisualConfigV8Path(path) : path;
+        const mappedPath = (path: YamlPath) => {
+          if (!useV8Layout) return path;
+
+          const mapping = findVisualConfigV8Mapping(path);
+          if (!mapping) return path;
+
+          const canonicalPath = [
+            ...mapping.canonical,
+            ...path.slice(mapping.legacy.length),
+          ];
+
+          // If the canonical block already exists, it is authoritative in CPA v8.
+          if (docHas(doc, mapping.canonical)) return canonicalPath;
+
+          // If this field's legacy block is still the source, keep editing it in place.
+          // CPA will migrate the complete block atomically on the subsequent v8 write.
+          if (docHas(doc, mapping.legacy)) return path;
+
+          // Avoid materializing a canonical child below a broader canonical block while
+          // that broader block still exists only in legacy form. Doing so would cause
+          // CPA NormalizeConfigLayout(..., true) to delete the broader legacy block
+          // without merging its untouched siblings.
+          const parentGuards = [
+            ...VISUAL_CONFIG_V8_PATH_MAPPINGS,
+            ...VISUAL_CONFIG_V8_PARENT_GUARDS,
+          ];
+          const hasLegacyCanonicalAncestor = parentGuards.some((guard) => {
+            if (!pathStartsWith(canonicalPath, guard.canonical)) return false;
+            if (pathsEqual(canonicalPath, guard.canonical)) return false;
+            return docHas(doc, guard.legacy) && !docHas(doc, guard.canonical);
+          });
+          if (hasLegacyCanonicalAncestor) return path;
+
+          return canonicalPath;
+        };
         const pruneEmptyParents = (path: YamlPath) => {
           for (let length = path.length - 1; length >= 1; length -= 1) {
             deleteIfMapEmpty(doc, path.slice(0, length));
