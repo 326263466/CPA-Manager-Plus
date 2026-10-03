@@ -306,8 +306,8 @@ function readObjectPath(
 function yamlMapHasMergeKey(value: unknown): boolean {
   if (!isMap(value)) return false;
   return value.items.some((pair) => {
-    const key = pair.key;
-    return key === '<<' || (isScalar(key) && key.value === '<<');
+    const key = isScalar(pair.key) ? pair.key.value : pair.key;
+    return key === '<<' || (typeof key === 'symbol' && key.description === '<<');
   });
 }
 
