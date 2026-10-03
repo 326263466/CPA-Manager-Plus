@@ -1625,7 +1625,7 @@ export function useVisualConfig(runtime: VisualConfigRuntime = {}) {
             .filter(Boolean);
           // In v8 the root mapping holds upstream credentials, not client keys.
           const hasUpstreamKeyGroups = asRecord(parsedCurrent['api-keys']) !== null;
-          if (hasCompat(['access', 'api-keys']) || hasUpstreamKeyGroups) {
+          if (useV8Layout || hasCompat(['access', 'api-keys']) || hasUpstreamKeyGroups) {
             ensureCompatMap(['access']);
             // Keep an explicit empty list authoritative over any legacy keys.
             setCompatValue(['access', 'api-keys'], apiKeys);
