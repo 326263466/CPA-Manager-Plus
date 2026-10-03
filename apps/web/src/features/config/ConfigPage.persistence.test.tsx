@@ -547,6 +547,35 @@ describe('ConfigPage v8 API-key persistence with the real visual config hook', (
 });
 
 describe('ConfigPage CPA v8 visual persistence', () => {
+  it('resolves merged commercial mode when deciding the restart warning', async () => {
+    mocks.useRealVisualConfig = true;
+    let serverYaml = [
+      'defaults: &server',
+      '  commercial-mode: false',
+      'server:',
+      '  <<: *server',
+      '',
+    ].join('\n');
+    mocks.fetchConfigYaml.mockImplementation(async () => serverYaml);
+    mocks.saveConfigYaml.mockImplementation(async (yaml: string) => {
+      serverYaml = yaml;
+    });
+
+    await mountPage();
+    await click('enable-commercial');
+    await clickSave();
+    await click('confirm-save');
+
+    const effective = parseYaml(serverYaml, { merge: true }) as {
+      server?: Record<string, unknown>;
+    };
+    expect(effective.server?.['commercial-mode']).toBe(true);
+    expect(mocks.showNotification).toHaveBeenCalledWith(
+      'notification.commercial_mode_restart_required',
+      'warning'
+    );
+  });
+
   it('saves commercial mode to server.commercial-mode and emits the restart warning', async () => {
     mocks.useRealVisualConfig = true;
     let serverConfig: {
