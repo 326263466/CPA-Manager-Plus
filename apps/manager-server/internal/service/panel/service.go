@@ -112,6 +112,11 @@ func (s *Service) serveEmbeddedAsset(
 	etag string,
 	writeError func(http.ResponseWriter, int, error),
 ) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
 	if readErr != nil {
 		writeError(w, http.StatusInternalServerError, readErr)
 		return
