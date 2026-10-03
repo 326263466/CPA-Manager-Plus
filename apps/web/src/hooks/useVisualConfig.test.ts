@@ -157,6 +157,20 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
+  it('creates client keys on access.api-keys for a v8 layout with no existing key nodes', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = 'server:\n  port: 8317\n';
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({ apiKeysText: 'sk-new' });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml));
+    expect(parsed.access?.['api-keys']).toEqual(['sk-new']);
+    expect(parsed['api-keys']).toBeUndefined();
+    harness.unmount();
+  });
+
   it('clears canonical client keys without reviving stale legacy keys', () => {
     const harness = mountUseVisualConfig();
     const yaml = 'config-version: 8\naccess:\n  api-keys: [sk-current]\napi-keys: [sk-stale]\n';
