@@ -65,6 +65,7 @@ const MANAGER_COLLECTOR_DEFAULT = {
 };
 
 const CONFIG_TAB_STORAGE_KEY = 'config-management:tab';
+const YAML_EFFECTIVE_PARSE_OPTIONS = { merge: true } as const;
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function resolveManagerRequestAuthKey({
@@ -315,7 +316,7 @@ const LazyConfigSourceEditor = lazy(() => import('@/components/config/ConfigSour
 
 function readCommercialModeFromYaml(yamlContent: string): boolean {
   try {
-    const parsed = parseYaml(yamlContent);
+    const parsed = parseYaml(yamlContent, YAML_EFFECTIVE_PARSE_OPTIONS);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
     const root = parsed as Record<string, unknown>;
     const server =
