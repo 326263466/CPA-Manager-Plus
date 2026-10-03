@@ -349,6 +349,8 @@ export function ConfigPage() {
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const managementKey = useAuthStore((state) => state.managementKey);
+  const serverVersion = useAuthStore((state) => state.serverVersion);
+  const serverCommit = useAuthStore((state) => state.serverCommit);
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const setUsageServiceConfig = useUsageServiceStore((state) => state.setUsageServiceConfig);
   const isMobile = useMediaQuery('(max-width: 768px)');
@@ -363,7 +365,7 @@ export function ConfigPage() {
     applyVisualChangesToYaml,
     setVisualValues,
     commitApiKeysText,
-  } = useVisualConfig();
+  } = useVisualConfig({ serverVersion, serverCommit });
 
   const [activeTab, setActiveTab] = useState<ConfigEditorTab>(() => {
     const saved = localStorage.getItem(CONFIG_TAB_STORAGE_KEY);
