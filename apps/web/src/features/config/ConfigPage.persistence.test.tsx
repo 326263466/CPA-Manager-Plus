@@ -537,9 +537,9 @@ describe('ConfigPage v8 API-key persistence with the real visual config hook', (
 
       expect(mocks.saveConfigYaml).toHaveBeenCalledTimes(1);
       expect(serverConfig).toEqual({
+        ...initialConfig,
+        debug: true,
         access: { 'api-keys': expectedKeys },
-        'api-keys': initialConfig['api-keys'],
-        observability: { logs: { debug: true } },
       });
       expect(displayedKeys()).toBe(expectedKeys.join('\n'));
     }
