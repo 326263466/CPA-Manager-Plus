@@ -294,5 +294,5 @@ func TestEmbeddedPanelAssetsRemainAvailableWithPanelPath(t *testing.T) {
 				t.Fatalf("X-CPAMP-Asset = %q, want %q", got, asset.marker)
 			}
 		})
-	})
+	}
 }
