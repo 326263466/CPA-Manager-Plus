@@ -77,6 +77,8 @@ http://<cpa-host>:8317/management.html
 
 On first access, CPA checks the latest Release in the configured GitHub repository for an asset named `management.html` and caches it in the CPA working directory.
 
+`management.html` remains a single-file distribution: the favicon and Apple Touch Icon are embedded as Data URLs, so Safari 26+ can use them without CPA downloading additional static icon files. Safari 18 and earlier do not reliably support Data URL icons; legacy root-path fallbacks such as `/favicon.ico` and `/apple-touch-icon.png` still depend on CPA supporting companion panel assets. Track that optional legacy-compatibility enhancement in [CLIProxyAPI #6340](https://github.com/router-for-me/CLIProxyAPI/issues/6340). This limitation does not affect the panel itself.
+
 ## Updates And Cache
 
 With `disable-auto-update-panel: false`, CPA periodically checks for a newer panel. If an upgrade still shows the old interface:

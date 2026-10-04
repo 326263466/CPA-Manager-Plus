@@ -25,12 +25,17 @@ const FORBIDDEN_INVISIBLE_CODE_POINTS = new Set([
 
 const DEFAULT_CHANGED_FILES_BASE = 'origin/main...HEAD';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const WEB_ICON_ASSET_PAIRS = [
-  ['apps/web/public/favicon.ico', 'apps/manager-server/internal/httpapi/web/favicon.ico'],
-  [
-    'apps/web/public/apple-touch-icon.png',
-    'apps/manager-server/internal/httpapi/web/apple-touch-icon.png',
-  ],
+const WEB_ICON_ASSETS = [
+  {
+    webPath: 'apps/web/public/favicon.ico',
+    embeddedPath: 'apps/manager-server/internal/httpapi/web/favicon.ico',
+    dataUrlPrefix: 'data:image/x-icon;base64,',
+  },
+  {
+    webPath: 'apps/web/public/apple-touch-icon.png',
+    embeddedPath: 'apps/manager-server/internal/httpapi/web/apple-touch-icon.png',
+    dataUrlPrefix: 'data:image/png;base64,',
+  },
 ];
 
 const toLineColumn = (text, index) => {
@@ -122,11 +127,16 @@ describe('repo source integrity', () => {
     expect(DEFAULT_CHANGED_FILES_BASE).toBe('origin/main...HEAD');
   });
 
-  it('keeps Vite and Manager Server icon assets byte-identical', () => {
-    for (const [webPath, embeddedPath] of WEB_ICON_ASSET_PAIRS) {
+  it('keeps Vite, Manager Server, and single-file panel icon assets in sync', () => {
+    const panelHtml = readFileSync(path.resolve(repoRoot, 'apps/web/index.html'), 'utf8');
+
+    for (const { webPath, embeddedPath, dataUrlPrefix } of WEB_ICON_ASSETS) {
       const webAsset = readFileSync(path.resolve(repoRoot, webPath));
       const embeddedAsset = readFileSync(path.resolve(repoRoot, embeddedPath));
       expect(Buffer.compare(webAsset, embeddedAsset), `${webPath} differs from ${embeddedPath}`).toBe(0);
+      expect(panelHtml, `${webPath} is not embedded into apps/web/index.html`).toContain(
+        `${dataUrlPrefix}${webAsset.toString('base64')}`
+      );
     }
   });
 

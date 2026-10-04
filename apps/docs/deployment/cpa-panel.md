@@ -77,6 +77,8 @@ http://<cpa-host>:8317/management.html
 
 CPA 首次访问时会从指定 GitHub 仓库的最新 Release 查找名为 `management.html` 的资源，并缓存到 CPA 工作目录。
 
+`management.html` 继续保持单文件分发：favicon 和 Apple Touch Icon 都以内嵌 Data URL 形式包含在页面中，Safari 26+ 可以直接使用，不需要 CPA 额外下载静态图标文件。Safari 18 及更早版本对 Data URL 图标的兼容性不可靠；这类旧版本如果需要根路径 `/favicon.ico` 或 `/apple-touch-icon.png` fallback，仍取决于 CPA 是否支持面板 companion assets，跟踪见 [CLIProxyAPI #6340](https://github.com/router-for-me/CLIProxyAPI/issues/6340)。这不影响轻量面板本身的功能。
+
 ## 更新与缓存
 
 当 `disable-auto-update-panel: false` 时，CPA 会定期检查最新面板。升级后仍显示旧界面时：
