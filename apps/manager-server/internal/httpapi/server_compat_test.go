@@ -135,9 +135,10 @@ func TestServerCompatHealthInfoAndPanel(t *testing.T) {
 	for _, tc := range []struct {
 		path        string
 		contentType string
+		marker      string
 	}{
-		{path: "/favicon.ico", contentType: "image/x-icon"},
-		{path: "/apple-touch-icon.png", contentType: "image/png"},
+		{path: "/favicon.ico", contentType: "image/x-icon", marker: "favicon"},
+		{path: "/apple-touch-icon.png", contentType: "image/png", marker: "apple-touch-icon"},
 	} {
 		rr := testutil.Request(t, handler, http.MethodGet, tc.path, "", "")
 		testutil.RequireStatus(t, rr, http.StatusOK)
@@ -146,6 +147,9 @@ func TestServerCompatHealthInfoAndPanel(t *testing.T) {
 		}
 		if rr.Body.Len() == 0 {
 			t.Fatalf("%s returned an empty body", tc.path)
+		}
+		if got := rr.Header().Get("X-CPAMP-Asset"); got != tc.marker {
+			t.Fatalf("%s X-CPAMP-Asset = %q, want %q", tc.path, got, tc.marker)
 		}
 		if rr.Header().Get("ETag") == "" {
 			t.Fatalf("%s is missing an ETag validator", tc.path)
@@ -170,6 +174,20 @@ func TestServerCompatPanelPathOverridesEmbeddedPanel(t *testing.T) {
 	}
 	if got, want := rr.Header().Get("Content-Length"), strconv.Itoa(len(customPanel)); got != want {
 		t.Fatalf("panel content length = %q, want %q", got, want)
+	}
+
+	for _, tc := range []struct {
+		path   string
+		marker string
+	}{
+		{path: "/favicon.ico", marker: "favicon"},
+		{path: "/apple-touch-icon.png", marker: "apple-touch-icon"},
+	} {
+		iconRR := testutil.Request(t, handler, http.MethodHead, tc.path, "", "")
+		testutil.RequireStatus(t, iconRR, http.StatusOK)
+		if got := iconRR.Header().Get("X-CPAMP-Asset"); got != tc.marker {
+			t.Fatalf("%s X-CPAMP-Asset = %q, want %q", tc.path, got, tc.marker)
+		}
 	}
 }
 

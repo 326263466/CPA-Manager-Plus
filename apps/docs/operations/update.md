@@ -245,7 +245,7 @@ rm static/management.html
 
 只替换 `management.html` 不会更新 Manager Server API。前端和 Manager Server 跨多个版本混用可能出现字段或功能不兼容，建议使用同一 CPAMP Release 的面板和 Manager Server。
 
-当 `PANEL_PATH` 实际指向外部面板时，Manager Server 不会用 CPAMP 内置的 `/favicon.ico` 或 `/apple-touch-icon.png` 冒充该面板的图标。若外部面板需要自己的图标，应在 HTML 中内嵌，或单独提供对应的 companion icon 文件。
+`PANEL_PATH` 只决定 Manager Server 托管哪个 `management.html`；根路径 `/favicon.ico` 和 `/apple-touch-icon.png` 仍属于 CPAMP 服务级资源。这样当 `PANEL_PATH` 指向官方 CPAMP Release 面板时，Safari/iOS 兼容路径仍然有效。第三方面板若需要不同品牌，应使用自己的明确图标 URL 或在 HTML 中内嵌图标。
 
 ## 更新后验证
 

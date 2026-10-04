@@ -43,11 +43,17 @@ for (const asset of assets) {
     'i'
   );
 
+  const expectedFallback = `${asset.dataUrlPrefix}${base64}`;
+  const fallbackPattern = new RegExp(
+    `\\bdata-cpamp-fallback=["']${escapeRegExp(expectedFallback)}["']`,
+    'i'
+  );
+
   if (!tag || !hrefPattern.test(tag)) {
     failures.push(`${asset.id} does not retain the root-resource href in the built HTML`);
   }
-  if (!bundle.includes(`${asset.dataUrlPrefix}${base64}`)) {
-    failures.push(`${asset.source} is missing from the built single-file fallback payload`);
+  if (!tag || !fallbackPattern.test(tag)) {
+    failures.push(`${asset.source} is not bound to the correct link fallback in the built HTML`);
   }
 }
 
@@ -59,6 +65,11 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
+if (!bundle.includes('X-CPAMP-Asset') || !bundle.includes('apple-touch-icon') || !bundle.includes('favicon')) {
+  console.error('Web icon CPAMP marker probe is missing from the built HTML');
+  process.exit(1);
+}
+
 console.log(
-  `Web icon root resources and embedded fallbacks are present: ${path.relative(repoRoot, bundlePath)}`
+  `Web icon root resources, marker probe, and bound embedded fallbacks are present: ${path.relative(repoRoot, bundlePath)}`
 );

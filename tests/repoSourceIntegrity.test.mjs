@@ -137,13 +137,21 @@ describe('repo source integrity', () => {
     for (const { id, webPath, embeddedPath, href, dataUrlPrefix } of WEB_ICON_ASSETS) {
       const webAsset = readFileSync(path.resolve(repoRoot, webPath));
       const embeddedAsset = readFileSync(path.resolve(repoRoot, embeddedPath));
+      const tagPattern = new RegExp(`<link\\b[^>]*\\bid=["']${id}["'][^>]*>`, 'i');
+      const tag = panelHtml.match(tagPattern)?.[0] || '';
+      const expectedFallback = `${dataUrlPrefix}${webAsset.toString('base64')}`;
+
       expect(Buffer.compare(webAsset, embeddedAsset), `${webPath} differs from ${embeddedPath}`).toBe(0);
-      expect(panelHtml, `${id} is missing from apps/web/index.html`).toContain(`id="${id}"`);
-      expect(panelHtml, `${id} does not prefer the root resource`).toContain(`href="${href}"`);
-      expect(panelHtml, `${webPath} is not embedded as a single-file fallback`).toContain(
-        `${dataUrlPrefix}${webAsset.toString('base64')}`
+      expect(tag, `${id} is missing from apps/web/index.html`).not.toBe('');
+      expect(tag, `${id} does not prefer the root resource`).toContain(`href="${href}"`);
+      expect(tag, `${webPath} is bound to the wrong embedded fallback`).toContain(
+        `data-cpamp-fallback="${expectedFallback}"`
       );
     }
+
+    expect(panelHtml).toContain("response.headers.get('X-CPAMP-Asset')");
+    expect(panelHtml).toContain("{ id: 'cpamp-favicon', marker: 'favicon' }");
+    expect(panelHtml).toContain("{ id: 'cpamp-apple-touch-icon', marker: 'apple-touch-icon' }");
   });
 
   it('detects bidi override and zero-width characters', () => {

@@ -95,11 +95,11 @@ func (s *Service) ServeManagementHTML(w http.ResponseWriter, r *http.Request, wr
 }
 
 func (s *Service) ServeFavicon(w http.ResponseWriter, r *http.Request, writeError func(http.ResponseWriter, int, error)) {
-	s.serveEmbeddedAsset(w, r, "favicon.ico", "image/x-icon", s.faviconData, s.faviconErr, s.faviconETag, writeError)
+	s.serveEmbeddedAsset(w, r, "favicon.ico", "image/x-icon", "favicon", s.faviconData, s.faviconErr, s.faviconETag, writeError)
 }
 
 func (s *Service) ServeAppleTouchIcon(w http.ResponseWriter, r *http.Request, writeError func(http.ResponseWriter, int, error)) {
-	s.serveEmbeddedAsset(w, r, "apple-touch-icon.png", "image/png", s.appleTouchIconData, s.appleTouchIconErr, s.appleTouchIconETag, writeError)
+	s.serveEmbeddedAsset(w, r, "apple-touch-icon.png", "image/png", "apple-touch-icon", s.appleTouchIconData, s.appleTouchIconErr, s.appleTouchIconETag, writeError)
 }
 
 func (s *Service) serveEmbeddedAsset(
@@ -107,6 +107,7 @@ func (s *Service) serveEmbeddedAsset(
 	r *http.Request,
 	name string,
 	contentType string,
+	assetMarker string,
 	data []byte,
 	readErr error,
 	etag string,
@@ -117,31 +118,15 @@ func (s *Service) serveEmbeddedAsset(
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
-	if s.externalPanelAvailable() {
-		http.NotFound(w, r)
-		return
-	}
 	if readErr != nil {
 		writeError(w, http.StatusInternalServerError, readErr)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-CPAMP-Asset", assetMarker)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
-}
-
-func (s *Service) externalPanelAvailable() bool {
-	if strings.TrimSpace(s.PanelPath) == "" {
-		return false
-	}
-	file, err := os.Open(s.PanelPath)
-	if err != nil {
-		return false
-	}
-	defer file.Close()
-	_, err = file.Stat()
-	return err == nil
 }
 
 func htmlContentType() string {
