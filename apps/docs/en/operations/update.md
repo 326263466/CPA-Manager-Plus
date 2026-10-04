@@ -245,6 +245,8 @@ For a manually deployed single-file panel:
 
 Replacing only `management.html` does not update Manager Server APIs. Mixing a frontend and Manager Server across several releases can cause field or feature incompatibilities; use the panel and Manager Server from the same CPAMP release.
 
+When `PANEL_PATH` resolves to an external panel, Manager Server does not substitute CPAMP's built-in `/favicon.ico` or `/apple-touch-icon.png` for that panel. Embed the panel's own icons or serve its companion icon files separately if they are required.
+
 ## Verify The Upgrade
 
 Run:

@@ -117,6 +117,10 @@ func (s *Service) serveEmbeddedAsset(
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
+	if s.externalPanelAvailable() {
+		http.NotFound(w, r)
+		return
+	}
 	if readErr != nil {
 		writeError(w, http.StatusInternalServerError, readErr)
 		return
@@ -125,6 +129,19 @@ func (s *Service) serveEmbeddedAsset(
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+}
+
+func (s *Service) externalPanelAvailable() bool {
+	if strings.TrimSpace(s.PanelPath) == "" {
+		return false
+	}
+	file, err := os.Open(s.PanelPath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	_, err = file.Stat()
+	return err == nil
 }
 
 func htmlContentType() string {

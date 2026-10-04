@@ -27,13 +27,17 @@ const DEFAULT_CHANGED_FILES_BASE = 'origin/main...HEAD';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_ICON_ASSETS = [
   {
+    id: 'cpamp-favicon',
     webPath: 'apps/web/public/favicon.ico',
     embeddedPath: 'apps/manager-server/internal/httpapi/web/favicon.ico',
+    href: 'favicon.ico',
     dataUrlPrefix: 'data:image/x-icon;base64,',
   },
   {
+    id: 'cpamp-apple-touch-icon',
     webPath: 'apps/web/public/apple-touch-icon.png',
     embeddedPath: 'apps/manager-server/internal/httpapi/web/apple-touch-icon.png',
+    href: 'apple-touch-icon.png',
     dataUrlPrefix: 'data:image/png;base64,',
   },
 ];
@@ -130,11 +134,13 @@ describe('repo source integrity', () => {
   it('keeps Vite, Manager Server, and single-file panel icon assets in sync', () => {
     const panelHtml = readFileSync(path.resolve(repoRoot, 'apps/web/index.html'), 'utf8');
 
-    for (const { webPath, embeddedPath, dataUrlPrefix } of WEB_ICON_ASSETS) {
+    for (const { id, webPath, embeddedPath, href, dataUrlPrefix } of WEB_ICON_ASSETS) {
       const webAsset = readFileSync(path.resolve(repoRoot, webPath));
       const embeddedAsset = readFileSync(path.resolve(repoRoot, embeddedPath));
       expect(Buffer.compare(webAsset, embeddedAsset), `${webPath} differs from ${embeddedPath}`).toBe(0);
-      expect(panelHtml, `${webPath} is not embedded into apps/web/index.html`).toContain(
+      expect(panelHtml, `${id} is missing from apps/web/index.html`).toContain(`id="${id}"`);
+      expect(panelHtml, `${id} does not prefer the root resource`).toContain(`href="${href}"`);
+      expect(panelHtml, `${webPath} is not embedded as a single-file fallback`).toContain(
         `${dataUrlPrefix}${webAsset.toString('base64')}`
       );
     }

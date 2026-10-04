@@ -253,3 +253,52 @@ func TestEmbeddedPanelAssetsOnlyAllowGetAndHead(t *testing.T) {
 		})
 	}
 }
+
+func TestEmbeddedPanelAssetsDoNotOverrideExternalPanelBranding(t *testing.T) {
+	panelPath := filepath.Join(t.TempDir(), "management.html")
+	if err := os.WriteFile(panelPath, []byte("<html><body>external panel</body></html>"), 0o600); err != nil {
+		t.Fatalf("write panel: %v", err)
+	}
+	s := New(panelPath, fstest.MapFS{
+		embeddedPanelFile:          &fstest.MapFile{Data: []byte(embeddedPanelBody)},
+		"web/favicon.ico":          &fstest.MapFile{Data: []byte("favicon")},
+		"web/apple-touch-icon.png": &fstest.MapFile{Data: []byte("apple-touch-icon")},
+	})
+
+	for _, asset := range []struct {
+		name  string
+		path  string
+		serve func(http.ResponseWriter, *http.Request, func(http.ResponseWriter, int, error))
+	}{
+		{name: "favicon", path: "/favicon.ico", serve: s.ServeFavicon},
+		{name: "apple touch icon", path: "/apple-touch-icon.png", serve: s.ServeAppleTouchIcon},
+	} {
+		asset := asset
+		t.Run(asset.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, asset.path, nil)
+			rr := httptest.NewRecorder()
+			asset.serve(rr, r, func(w http.ResponseWriter, status int, err error) {
+				http.Error(w, err.Error(), status)
+			})
+			if rr.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", rr.Code, http.StatusNotFound)
+			}
+		})
+	}
+}
+
+func TestEmbeddedPanelAssetsRemainAvailableWhenPanelPathIsMissing(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "absent.html"), fstest.MapFS{
+		embeddedPanelFile:          &fstest.MapFile{Data: []byte(embeddedPanelBody)},
+		"web/favicon.ico":          &fstest.MapFile{Data: []byte("favicon")},
+		"web/apple-touch-icon.png": &fstest.MapFile{Data: []byte("apple-touch-icon")},
+	})
+	r := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
+	rr := httptest.NewRecorder()
+	s.ServeFavicon(rr, r, func(w http.ResponseWriter, status int, err error) {
+		http.Error(w, err.Error(), status)
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
