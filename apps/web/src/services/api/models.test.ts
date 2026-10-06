@@ -177,6 +177,33 @@ describe('Claude model discovery authentication', () => {
     expect(mocks.request.mock.calls[0]?.[0]?.header).not.toHaveProperty('x-api-key');
   });
 
+  it('protects the OAuth beta from custom headers on Anthropic model discovery', async () => {
+    mocks.request.mockResolvedValueOnce(successfulResult({ data: [{ id: 'claude-1' }] }));
+    await modelsApi.fetchClaudeModelsViaApiCall(
+      'https://api.anthropic.com',
+      'sk-ant-oat-test-token',
+      { 'Anthropic-Beta': 'custom-beta' }
+    );
+    const header = mocks.request.mock.calls[0]?.[0]?.header ?? {};
+    expect(header['anthropic-beta']).toBe('oauth-2025-04-20');
+    expect(header).not.toHaveProperty('Anthropic-Beta');
+  });
+
+  it('keeps custom OAuth beta overrides for third-party model discovery', async () => {
+    mocks.request.mockResolvedValueOnce(successfulResult({ data: [{ id: 'claude-1' }] }));
+    await modelsApi.fetchClaudeModelsViaApiCall(
+      'https://gateway.example.com',
+      'sk-ant-oat-test-token',
+      { 'Anthropic-Beta': 'custom-beta' }
+    );
+    expect(mocks.request.mock.calls[0]?.[0]?.header).toEqual(
+      expect.objectContaining({
+        Authorization: 'Bearer sk-ant-oat-test-token',
+        'Anthropic-Beta': 'custom-beta',
+      })
+    );
+  });
+
   it('keeps custom Authorization as a header-only credential', async () => {
     mocks.request.mockResolvedValueOnce(successfulResult({ data: [{ id: 'claude-1' }] }));
     await modelsApi.fetchClaudeModelsViaApiCall(

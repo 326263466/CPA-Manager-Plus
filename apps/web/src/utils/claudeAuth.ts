@@ -28,11 +28,15 @@ const findHeaderKey = (headers: Record<string, string>, name: string): string | 
 export const hasClaudeHeader = (headers: Record<string, string>, name: string): boolean =>
   findHeaderKey(headers, name) !== undefined;
 
-const setHeader = (headers: Record<string, string>, name: string, value: string) => {
+const deleteHeader = (headers: Record<string, string>, name: string) => {
   const target = name.toLowerCase();
   Object.keys(headers).forEach((key) => {
     if (key.toLowerCase() === target) delete headers[key];
   });
+};
+
+const setHeader = (headers: Record<string, string>, name: string, value: string) => {
+  deleteHeader(headers, name);
   headers[name] = value;
 };
 
@@ -97,6 +101,16 @@ export const buildClaudeRequestHeaders = (
     setHeader(headers, 'Content-Type', options.contentType);
   }
   applyCustomHeaders(headers, customHeaders);
+
+  // CPA treats provider custom headers as an escape hatch for third-party gateways,
+  // but protects Anthropic-Beta on api.anthropic.com after custom headers are applied.
+  if (firstParty) {
+    if (oauthToken) {
+      setHeader(headers, 'anthropic-beta', CLAUDE_OAUTH_BETA);
+    } else {
+      deleteHeader(headers, 'anthropic-beta');
+    }
+  }
 
   return {
     headers,

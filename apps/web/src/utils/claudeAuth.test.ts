@@ -53,9 +53,33 @@ describe('Claude request authentication parity', () => {
     expect(result.effectiveXApiKey).toBe(false);
   });
 
-  it('lets a custom OAuth beta override the default', () => {
+  it('protects the OAuth beta from custom headers on Anthropic first-party', () => {
     const result = buildClaudeRequestHeaders({
       url: 'https://api.anthropic.com/v1/messages',
+      apiKey: 'sk-ant-oat-test-token',
+      customHeaders: { 'Anthropic-Beta': 'custom-beta' },
+    });
+    expect(result.headers['anthropic-beta']).toBe('oauth-2025-04-20');
+    expect(result.headers).not.toHaveProperty('Anthropic-Beta');
+    expect(
+      Object.keys(result.headers).filter((key) => key.toLowerCase() === 'anthropic-beta')
+    ).toHaveLength(1);
+  });
+
+  it('drops provider-level Anthropic-Beta for first-party API-key probes', () => {
+    const result = buildClaudeRequestHeaders({
+      url: 'https://api.anthropic.com/v1/messages',
+      apiKey: 'api-key',
+      customHeaders: { 'Anthropic-Beta': 'custom-beta' },
+    });
+    expect(
+      Object.keys(result.headers).filter((key) => key.toLowerCase() === 'anthropic-beta')
+    ).toHaveLength(0);
+  });
+
+  it('keeps custom Anthropic-Beta overrides for third-party Claude gateways', () => {
+    const result = buildClaudeRequestHeaders({
+      url: 'https://gateway.example.com/v1/messages',
       apiKey: 'sk-ant-oat-test-token',
       customHeaders: { 'Anthropic-Beta': 'custom-beta' },
     });
