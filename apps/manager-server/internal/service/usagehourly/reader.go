@@ -2,6 +2,7 @@ package usagehourly
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -165,7 +166,12 @@ func (r *Reader) loadRows(ctx context.Context, filter store.AnalyticsFilter, das
 	}
 	dbSnapshot, err := r.store.LoadUsageHourlyPricingSnapshot(ctx, aggregateFilter, pricingFilter)
 	if err != nil {
-		return Snapshot{ReadError: err}, false
+		if errors.Is(err, store.ErrUsagePricingCoverageIncomplete) ||
+			errors.Is(err, store.ErrUsagePricingRecoveryFailed) {
+			return Snapshot{ReadError: err}, false
+		}
+		r.logFallback(fmt.Sprintf("hourly pricing snapshot query failed: %v", err))
+		return Snapshot{}, false
 	}
 	if !dbSnapshot.AggregateAvailable {
 		r.logFallback(fmt.Sprintf("permanent hourly aggregate unavailable: schema_version=%d status=%s", dbSnapshot.AggregateState.SchemaVersion, dbSnapshot.AggregateState.Status))

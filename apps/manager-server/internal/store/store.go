@@ -687,7 +687,10 @@ func (s *Store) LoadUsageHourlyPricingSnapshot(
 	if aggregateAvailable && (pricingErr != nil || !pricingAvailable || !hourlyPricingCoverageMatches(aggregateRows, pricingRows)) {
 		pricingRows, err = s.UsagePricing.LoadHourlyRowsFromEventsTx(ctx, tx, pricingFilter)
 		if err != nil {
-			return UsageHourlyPricingSnapshot{}, fmt.Errorf("retained event query: %w", err)
+			if errors.Is(err, ErrUsagePricingCoverageIncomplete) {
+				return UsageHourlyPricingSnapshot{}, err
+			}
+			return UsageHourlyPricingSnapshot{}, fmt.Errorf("%w: retained event query: %w", ErrUsagePricingRecoveryFailed, err)
 		}
 		if !hourlyPricingCoverageMatches(aggregateRows, pricingRows) {
 			return UsageHourlyPricingSnapshot{}, ErrUsagePricingCoverageIncomplete

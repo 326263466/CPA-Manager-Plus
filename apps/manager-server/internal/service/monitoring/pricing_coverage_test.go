@@ -87,8 +87,8 @@ func TestAnalyticsPrimaryPeriodRecoveryQueryErrorFailsFatal(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := New(db, true).Analytics(ctx, request)
-	if err == nil || errors.Is(err, store.ErrUsagePricingCoverageIncomplete) {
-		t.Fatalf("expected fatal query error, got err=%v", err)
+	if err == nil || !errors.Is(err, store.ErrUsagePricingRecoveryFailed) || errors.Is(err, store.ErrUsagePricingCoverageIncomplete) {
+		t.Fatalf("expected ErrUsagePricingRecoveryFailed, got err=%v", err)
 	}
 	if got.Summary != nil {
 		t.Fatalf("query error returned summary: %#v", got.Summary)
@@ -147,8 +147,8 @@ func TestAnalyticsComparisonPeriodRecoveryQueryErrorFailsFatal(t *testing.T) {
 	}
 	request.Include.SummaryComparison = true
 	got, err := New(db, true).Analytics(ctx, request)
-	if err == nil || errors.Is(err, store.ErrUsagePricingCoverageIncomplete) {
-		t.Fatalf("expected fatal query error on comparison recovery, got err=%v", err)
+	if err == nil || !errors.Is(err, store.ErrUsagePricingRecoveryFailed) || errors.Is(err, store.ErrUsagePricingCoverageIncomplete) {
+		t.Fatalf("expected ErrUsagePricingRecoveryFailed on comparison recovery, got err=%v", err)
 	}
 	if got.Summary != nil {
 		t.Fatalf("query error returned summary: %#v", got.Summary)
