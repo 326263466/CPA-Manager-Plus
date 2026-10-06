@@ -132,3 +132,47 @@ describe('modelsApi request-level proxy', () => {
     }
   );
 });
+
+
+describe('Claude model discovery authentication', () => {
+  it('uses x-api-key for Anthropic first-party API keys', async () => {
+    mocks.request.mockResolvedValueOnce(successfulResult({ data: [{ id: 'claude-1' }] }));
+    await modelsApi.fetchClaudeModelsViaApiCall('https://api.anthropic.com', 'api-key');
+    expect(mocks.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        header: expect.objectContaining({
+          'x-api-key': 'api-key',
+          'anthropic-version': '2023-06-01',
+        }),
+      })
+    );
+    expect(mocks.request.mock.calls[0]?.[0]?.header).not.toHaveProperty('Authorization');
+  });
+
+  it('uses Bearer auth for custom Claude upstreams', async () => {
+    mocks.request.mockResolvedValueOnce(successfulResult({ data: [{ id: 'claude-1' }] }));
+    await modelsApi.fetchClaudeModelsViaApiCall('https://gateway.example.com', 'api-key');
+    expect(mocks.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        header: expect.objectContaining({ Authorization: 'Bearer api-key' }),
+      })
+    );
+    expect(mocks.request.mock.calls[0]?.[0]?.header).not.toHaveProperty('x-api-key');
+  });
+
+  it('keeps custom Authorization as a header-only credential', async () => {
+    mocks.request.mockResolvedValueOnce(successfulResult({ data: [{ id: 'claude-1' }] }));
+    await modelsApi.fetchClaudeModelsViaApiCall(
+      'https://gateway.example.com',
+      undefined,
+      { Authorization: 'Bearer custom-token' },
+      'auth-1'
+    );
+    expect(mocks.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        header: expect.objectContaining({ Authorization: 'Bearer custom-token' }),
+      })
+    );
+    expect(mocks.request.mock.calls[0]?.[0]?.header).not.toHaveProperty('x-api-key');
+  });
+});
