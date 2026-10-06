@@ -1,4 +1,7 @@
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
+const CLAUDE_OAUTH_BETA = 'oauth-2025-04-20';
+const ANTHROPIC_FIRST_PARTY_URL_PATTERN =
+  /^https:\/\/api\.anthropic\.com(?::(?:443)?)?(?:[/?#]|$)/i;
 
 export type ClaudeBaseType = 'anthropic' | 'custom';
 
@@ -47,22 +50,9 @@ const applyCustomHeaders = (
 
 export const isAnthropicFirstPartyUrl = (value: string): boolean => {
   const raw = String(value ?? '').trim();
-  // Go's url.Parse keeps even empty userinfo ("https://@host") as a non-nil User.
-  // Reject raw authority userinfo before WHATWG URL normalization erases that distinction.
-  if (/^https:\/\/[^/?#]*@/i.test(raw)) return false;
-
-  try {
-    const parsed = new URL(raw);
-    return (
-      parsed.protocol.toLowerCase() === 'https:' &&
-      parsed.hostname.toLowerCase() === 'api.anthropic.com' &&
-      (parsed.port === '' || parsed.port === '443') &&
-      !parsed.username &&
-      !parsed.password
-    );
-  } catch {
-    return false;
-  }
+  // Keep this gate on the raw authority instead of WHATWG URL normalization.
+  // CPA's Go gate accepts only https://api.anthropic.com with an empty port or exact :443.
+  return ANTHROPIC_FIRST_PARTY_URL_PATTERN.test(raw);
 };
 
 export const isClaudeOAuthToken = (value: string): boolean =>
@@ -76,6 +66,7 @@ export const buildClaudeRequestHeaders = (
   const apiKey = String(options.apiKey ?? '').trim();
   const authIndex = String(options.authIndex ?? '').trim();
   const firstParty = isAnthropicFirstPartyUrl(options.url);
+  const oauthToken = isClaudeOAuthToken(apiKey);
   const hasCustomAuth = Object.entries(customHeaders).some(([name, value]) => {
     const normalizedName = name.trim().toLowerCase();
     return (
@@ -85,7 +76,7 @@ export const buildClaudeRequestHeaders = (
   });
 
   if (apiKey) {
-    if (firstParty && !isClaudeOAuthToken(apiKey)) {
+    if (firstParty && !oauthToken) {
       setHeader(headers, 'x-api-key', apiKey);
     } else {
       setHeader(headers, 'Authorization', `Bearer ${apiKey}`);
@@ -99,6 +90,9 @@ export const buildClaudeRequestHeaders = (
   }
 
   setHeader(headers, 'anthropic-version', DEFAULT_ANTHROPIC_VERSION);
+  if (oauthToken) {
+    setHeader(headers, 'anthropic-beta', CLAUDE_OAUTH_BETA);
+  }
   if (options.contentType) {
     setHeader(headers, 'Content-Type', options.contentType);
   }

@@ -8,8 +8,15 @@ import {
 describe('Claude request authentication parity', () => {
   it.each([
     ['https://api.anthropic.com/v1/models', true],
+    ['https://API.ANTHROPIC.COM/v1/models', true],
     ['https://api.anthropic.com:443/v1/models', true],
+    ['https://api.anthropic.com:/v1/models', true],
     ['https://api.anthropic.com.evil.example/v1/models', false],
+    ['https://api.anthropic.com./v1/models', false],
+    ['https://api.anthropic.com:0443/v1/models', false],
+    ['https://api.anthropic.com:00443/v1/models', false],
+    ['https://api%2eanthropic.com/v1/models', false],
+    ['https://api.anthropic.com\\v1/models', false],
     ['http://api.anthropic.com/v1/models', false],
     ['https://api.anthropic.com:8443/v1/models', false],
     ['https://user@api.anthropic.com/v1/models', false],
@@ -42,7 +49,20 @@ describe('Claude request authentication parity', () => {
       apiKey: 'sk-ant-oat-test-token',
     });
     expect(result.headers.Authorization).toBe('Bearer sk-ant-oat-test-token');
+    expect(result.headers['anthropic-beta']).toBe('oauth-2025-04-20');
     expect(result.effectiveXApiKey).toBe(false);
+  });
+
+  it('lets a custom OAuth beta override the default', () => {
+    const result = buildClaudeRequestHeaders({
+      url: 'https://api.anthropic.com/v1/messages',
+      apiKey: 'sk-ant-oat-test-token',
+      customHeaders: { 'Anthropic-Beta': 'custom-beta' },
+    });
+    expect(result.headers['Anthropic-Beta']).toBe('custom-beta');
+    expect(
+      Object.keys(result.headers).filter((key) => key.toLowerCase() === 'anthropic-beta')
+    ).toHaveLength(1);
   });
 
   it('maps auth-index placeholders by upstream type', () => {

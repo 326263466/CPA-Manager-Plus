@@ -160,6 +160,23 @@ describe('Claude model discovery authentication', () => {
     expect(mocks.request.mock.calls[0]?.[0]?.header).not.toHaveProperty('x-api-key');
   });
 
+  it('adds the Claude OAuth beta for Anthropic OAuth tokens', async () => {
+    mocks.request.mockResolvedValueOnce(successfulResult({ data: [{ id: 'claude-1' }] }));
+    await modelsApi.fetchClaudeModelsViaApiCall(
+      'https://api.anthropic.com',
+      'sk-ant-oat-test-token'
+    );
+    expect(mocks.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        header: expect.objectContaining({
+          Authorization: 'Bearer sk-ant-oat-test-token',
+          'anthropic-beta': 'oauth-2025-04-20',
+        }),
+      })
+    );
+    expect(mocks.request.mock.calls[0]?.[0]?.header).not.toHaveProperty('x-api-key');
+  });
+
   it('keeps custom Authorization as a header-only credential', async () => {
     mocks.request.mockResolvedValueOnce(successfulResult({ data: [{ id: 'claude-1' }] }));
     await modelsApi.fetchClaudeModelsViaApiCall(
