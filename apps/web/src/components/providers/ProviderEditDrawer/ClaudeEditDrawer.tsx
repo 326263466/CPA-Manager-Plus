@@ -521,6 +521,7 @@ export function ClaudeEditDrawer({
         {
           method: 'POST',
           authIndex: keyAuthIndex,
+          proxyUrl: form.proxyUrl,
           url: endpoint,
           header: headers,
           data: JSON.stringify({
@@ -559,6 +560,7 @@ export function ClaudeEditDrawer({
     form.authIndex,
     form.baseUrl,
     form.headers,
+    form.proxyUrl,
     isTesting,
     showNotification,
     t,

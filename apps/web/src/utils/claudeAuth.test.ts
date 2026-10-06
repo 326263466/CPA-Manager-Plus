@@ -13,6 +13,7 @@ describe('Claude request authentication parity', () => {
     ['http://api.anthropic.com/v1/models', false],
     ['https://api.anthropic.com:8443/v1/models', false],
     ['https://user@api.anthropic.com/v1/models', false],
+    ['https://@api.anthropic.com/v1/models', false],
   ] as const)('classifies Anthropic first-party URL %s', (url, expected) => {
     expect(isAnthropicFirstPartyUrl(url)).toBe(expected);
   });

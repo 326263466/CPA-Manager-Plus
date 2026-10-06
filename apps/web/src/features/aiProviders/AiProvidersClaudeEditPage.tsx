@@ -145,11 +145,20 @@ export function AiProvidersClaudeEditPage() {
       form.apiKey.trim(),
       normalizeAuthIndex(form.authIndex) ?? '',
       form.baseUrl?.trim() ?? '',
+      form.proxyUrl?.trim() ?? '',
       testModel.trim(),
       headersSignature,
       modelsSignature,
     ].join('||');
-  }, [form.apiKey, form.authIndex, form.baseUrl, form.headers, form.modelEntries, testModel]);
+  }, [
+    form.apiKey,
+    form.authIndex,
+    form.baseUrl,
+    form.headers,
+    form.modelEntries,
+    form.proxyUrl,
+    testModel,
+  ]);
 
   const previousConnectivityConfigRef = useRef(connectivityConfigSignature);
 
@@ -216,6 +225,7 @@ export function AiProvidersClaudeEditPage() {
         {
           method: 'POST',
           authIndex: keyAuthIndex,
+          proxyUrl: form.proxyUrl,
           url: endpoint,
           header: headers,
           data: JSON.stringify({
@@ -257,6 +267,7 @@ export function AiProvidersClaudeEditPage() {
     form.authIndex,
     form.baseUrl,
     form.headers,
+    form.proxyUrl,
     isTesting,
     setTestMessage,
     setTestStatus,

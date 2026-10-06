@@ -46,8 +46,13 @@ const applyCustomHeaders = (
 };
 
 export const isAnthropicFirstPartyUrl = (value: string): boolean => {
+  const raw = String(value ?? '').trim();
+  // Go's url.Parse keeps even empty userinfo ("https://@host") as a non-nil User.
+  // Reject raw authority userinfo before WHATWG URL normalization erases that distinction.
+  if (/^https:\/\/[^/?#]*@/i.test(raw)) return false;
+
   try {
-    const parsed = new URL(String(value ?? '').trim());
+    const parsed = new URL(raw);
     return (
       parsed.protocol.toLowerCase() === 'https:' &&
       parsed.hostname.toLowerCase() === 'api.anthropic.com' &&
